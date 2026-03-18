@@ -12,7 +12,7 @@ require (
 	github.com/hellofresh/health-go/v4 v4.7.0
 	github.com/hiero-ledger/hiero-sdk-go/v2 v2.75.0
 	github.com/jackc/pgtype v1.14.4
-	github.com/lib/pq v1.11.2
+	github.com/lib/pq v1.12.0
 	github.com/onrik/gorm-logrus v0.5.0
 	github.com/ory/dockertest/v3 v3.12.0
 	github.com/pkg/errors v0.9.1
