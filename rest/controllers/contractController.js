@@ -1109,6 +1109,8 @@ class ContractController extends BaseController {
     utils.validateReq(req, acceptedSingleContractResultsParameters);
 
     let transactionDetails;
+    let ethTransactionConsensusTimestamp;
+    let contractDetails;
 
     const {transactionIdOrHash} = req.params;
     if (utils.isValidEthHash(transactionIdOrHash)) {
@@ -1116,6 +1118,7 @@ class ContractController extends BaseController {
         utils.parseHexStr(transactionIdOrHash)
       );
       transactionDetails = detailsByHash[0];
+      ethTransactionConsensusTimestamp = transactionDetails?.consensusTimestamp;
     } else {
       const transactionId = TransactionId.fromString(transactionIdOrHash);
       const nonce = getLastNonceParamValue(req.query);
@@ -1128,23 +1131,37 @@ class ContractController extends BaseController {
       transactionDetails = transactions[0];
       // want to look up involved contract parties using the payer account id
       transactionDetails.entityId = transactionDetails.payerAccountId;
+      ethTransactionConsensusTimestamp =
+        transactionDetails.parentConsensusTimestamp ?? transactionDetails.consensusTimestamp;
     }
 
     if (!transactionDetails) {
       throw new NotFoundError();
     }
 
-    const contractDetails = await ContractService.getInvolvedContractsByTimestampAndContractId(
-      transactionDetails.consensusTimestamp,
-      transactionDetails.entityId
-    );
+    if (utils.isValidEthHash(transactionIdOrHash)) {
+      contractDetails =
+        (await ContractService.getContractCreateChildByParentConsensusTimestamp(
+          transactionDetails.consensusTimestamp,
+          transactionDetails.payerAccountId
+        )) ||
+        (await ContractService.getInvolvedContractsByTimestampAndContractId(
+          transactionDetails.consensusTimestamp,
+          transactionDetails.entityId
+        ));
+    } else {
+      contractDetails = await ContractService.getInvolvedContractsByTimestampAndContractId(
+        transactionDetails.consensusTimestamp,
+        transactionDetails.entityId
+      );
+    }
 
     if (!contractDetails) {
       throw new NotFoundError();
     }
 
     const [contractResults, ethTransactions, recordFile, contractLogs, contractStateChanges] =
-      await this.getDetailedContractResults(contractDetails, undefined);
+      await this.getDetailedContractResults(contractDetails, undefined, ethTransactionConsensusTimestamp);
 
     if (contractResults.length === 0) {
       if (ethTransactions.length !== 0) {
@@ -1182,11 +1199,15 @@ class ContractController extends BaseController {
     }
   };
 
-  getDetailedContractResults = async (contractDetails, contractId = undefined) => {
+  getDetailedContractResults = async (
+    contractDetails,
+    contractId = undefined,
+    ethTransactionConsensusTimestamp = contractDetails.consensusTimestamp
+  ) => {
     return Promise.all([
       ContractService.getContractResultsByTimestamps(contractDetails.consensusTimestamp, contractDetails.contractIds),
       TransactionService.getEthTransactionByTimestampAndPayerId(
-        contractDetails.consensusTimestamp,
+        ethTransactionConsensusTimestamp,
         contractDetails.payerAccountId
       ),
       RecordFileService.getRecordFileBlockDetailsFromTimestamp(contractDetails.consensusTimestamp),
@@ -1234,8 +1255,17 @@ class ContractController extends BaseController {
 
     let payerAccountId;
     if (tx.length) {
-      consensusTimestamp = tx[0].consensusTimestamp;
-      payerAccountId = transactionId ? transactionId.getEntityId().getEncodedId() : tx[0].payerAccountId;
+      if (transactionId) {
+        consensusTimestamp = tx[0].consensusTimestamp;
+        payerAccountId = transactionId.getEntityId().getEncodedId();
+      } else {
+        payerAccountId = tx[0].payerAccountId;
+        const childContractDetails = await ContractService.getContractCreateChildByParentConsensusTimestamp(
+          tx[0].consensusTimestamp,
+          payerAccountId
+        );
+        consensusTimestamp = childContractDetails?.consensusTimestamp ?? tx[0].consensusTimestamp;
+      }
     } else {
       throw new NotFoundError();
     }

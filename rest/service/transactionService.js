@@ -17,6 +17,7 @@ const successTransactionResult = TransactionResult.getProtoId('SUCCESS');
 class TransactionService extends BaseService {
   static transactionDetailsFromTransactionIdQuery = `
     select ${Transaction.CONSENSUS_TIMESTAMP}, ${Transaction.NONCE},
+           ${Transaction.PARENT_CONSENSUS_TIMESTAMP},
            ${Transaction.SCHEDULED}, ${Transaction.TYPE},
            ${Transaction.PAYER_ACCOUNT_ID}
     from ${Transaction.tableName}

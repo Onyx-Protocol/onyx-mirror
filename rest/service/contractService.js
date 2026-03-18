@@ -19,11 +19,13 @@ import {
   EthereumTransaction,
   Transaction,
   TransactionResult,
+  TransactionType,
 } from '../model';
 import ContractTransaction from '../model/contractTransaction';
 import {RecordFileService} from './index';
 
 const {default: defaultLimit} = getResponseLimit();
+const contractCreateTransactionType = TransactionType.getProtoId('CONTRACTCREATEINSTANCE');
 const contractLogsFields = `${ContractLog.getFullName(ContractLog.BLOOM)},
 ${ContractLog.getFullName(ContractLog.CONTRACT_ID)},
 ${ContractLog.getFullName(ContractLog.CONSENSUS_TIMESTAMP)},
@@ -204,6 +206,24 @@ class ContractService extends BaseService {
                    from ${ContractTransaction.tableName}
                    where ${ContractTransaction.CONSENSUS_TIMESTAMP} = $1 and ${ContractTransaction.ENTITY_ID} = $2`;
 
+  static contractCreateChildByParentConsensusTimestampQuery = `select ${ContractTransaction.PAYER_ACCOUNT_ID},
+                                              ${ContractTransaction.ENTITY_ID},
+                                              ${ContractTransaction.CONTRACT_IDS},
+                                              ${ContractTransaction.CONSENSUS_TIMESTAMP}
+                   from ${ContractTransaction.tableName}
+                   join ${Transaction.tableName} ${Transaction.tableAlias}
+                     on ${Transaction.getFullName(Transaction.CONSENSUS_TIMESTAMP)} =
+                        ${ContractTransaction.tableName}.${ContractTransaction.CONSENSUS_TIMESTAMP}
+                    and ${Transaction.getFullName(Transaction.PAYER_ACCOUNT_ID)} =
+                        ${ContractTransaction.tableName}.${ContractTransaction.PAYER_ACCOUNT_ID}
+                    and ${Transaction.getFullName(Transaction.ENTITY_ID)} =
+                        ${ContractTransaction.tableName}.${ContractTransaction.ENTITY_ID}
+                   where ${Transaction.getFullName(Transaction.PARENT_CONSENSUS_TIMESTAMP)} = $1
+                     and ${Transaction.getFullName(Transaction.PAYER_ACCOUNT_ID)} = $2
+                     and ${Transaction.getFullName(Transaction.TYPE)} = ${contractCreateTransactionType}
+                   order by ${ContractTransaction.tableName}.${ContractTransaction.CONSENSUS_TIMESTAMP} asc
+                   limit 1`;
+
   static ethereumTransactionsByHashQuery = `select * from ${ContractTransactionHash.tableName}
         where ${ContractTransactionHash.HASH} = $1
         order by (${ContractTransactionHash.TRANSACTION_RESULT} = ${successTransactionResult}) desc,
@@ -311,6 +331,18 @@ class ContractService extends BaseService {
       return null;
     }
     const contractDetails = await super.getSingleRow(ContractService.involvedContractsQuery, [timestamp, contractId]);
+    return _.isNull(contractDetails) ? null : new ContractTransaction(contractDetails);
+  }
+
+  async getContractCreateChildByParentConsensusTimestamp(parentConsensusTimestamp, payerAccountId) {
+    if (!parentConsensusTimestamp || payerAccountId === null || payerAccountId === undefined) {
+      return null;
+    }
+
+    const contractDetails = await super.getSingleRow(
+      ContractService.contractCreateChildByParentConsensusTimestampQuery,
+      [parentConsensusTimestamp, payerAccountId]
+    );
     return _.isNull(contractDetails) ? null : new ContractTransaction(contractDetails);
   }
 

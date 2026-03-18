@@ -677,14 +677,21 @@ final class ContractCreateTransactionHandlerTest extends AbstractTransactionHand
         var contractId =
                 EntityId.of(recordItem.getTransactionRecord().getReceipt().getContractID());
         var timestamp = recordItem.getConsensusTimestamp();
+        var runtimeBytecode = DomainUtils.toBytes(recordItem
+                .getSidecarRecords()
+                .get(DEFAULT_BYTECODE_SIDECAR_INDEX)
+                .getBytecode()
+                .getRuntimeBytecode());
         var transaction = domainBuilder
                 .transaction()
                 .customize(t -> t.consensusTimestamp(timestamp).entityId(contractId))
                 .get();
         transactionHandler.updateTransaction(transaction, recordItem);
         assertEntity(contractId, timestamp).returns(null, Entity::getAutoRenewAccountId);
-        assertContract(contractId).returns(null, Contract::getFileId).satisfies(c -> assertThat(c.getInitcode())
-                .isNotEmpty());
+        assertContract(contractId)
+                .returns(null, Contract::getFileId)
+                .returns(runtimeBytecode, Contract::getRuntimeBytecode)
+                .satisfies(c -> assertThat(c.getInitcode()).isNotEmpty());
         assertThat(recordItem.getEntityTransactions())
                 .containsExactlyInAnyOrderEntriesOf(getExpectedEntityTransactions(recordItem, transaction));
     }

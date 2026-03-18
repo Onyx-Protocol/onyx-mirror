@@ -1690,3 +1690,78 @@ describe('ContractService.getInvolvedContractsByTimestampAndContractId tests', (
     expect(transactionDetails.contractIds).toIncludeSameMembers(expected);
   });
 });
+
+describe('ContractService.getContractCreateChildByParentConsensusTimestamp tests', () => {
+  const parentConsensusTimestamp = 167654000123456n;
+  const childConsensusTimestamp = 167654000123457n;
+  const payerId = EntityId.parseString('8001');
+  const contractId = EntityId.parseString('5001');
+  const senderId = EntityId.parseString('8002');
+  const ethereumTxType = TransactionType.getProtoId('ETHEREUMTRANSACTION');
+  const contractCreateType = TransactionType.getProtoId('CONTRACTCREATEINSTANCE');
+  const successTransactionResult = TransactionResult.getProtoId('SUCCESS');
+
+  beforeEach(async () => {
+    await integrationDomainOps.loadContractResults([
+      {
+        consensus_timestamp: parentConsensusTimestamp,
+        contract_id: payerId.num,
+        created_contract_ids: [],
+        payer_account_id: payerId.num,
+        sender_id: payerId.num,
+        transaction_hash: '4a563af33c4871b51a8b108aa2fe1dd5280a30dfb7236170ae5e5e7957eb6392',
+        transaction_result: successTransactionResult,
+      },
+      {
+        consensus_timestamp: childConsensusTimestamp,
+        contract_id: contractId.num,
+        created_contract_ids: [contractId.num],
+        payer_account_id: payerId.num,
+        sender_id: senderId.num,
+        transaction_hash: '4a563af33c4871b51a8b108aa2fe1dd5280a30dfb7236170ae5e5e7957eb6392',
+        transaction_result: successTransactionResult,
+      },
+    ]);
+
+    await integrationDomainOps.loadTransactions([
+      {
+        consensus_timestamp: parentConsensusTimestamp,
+        entity_id: payerId.num,
+        payerAccountId: payerId.num,
+        result: successTransactionResult,
+        type: ethereumTxType,
+        valid_start_timestamp: parentConsensusTimestamp - 56n,
+      },
+      {
+        consensus_timestamp: childConsensusTimestamp,
+        entity_id: contractId.num,
+        parent_consensus_timestamp: parentConsensusTimestamp,
+        payerAccountId: payerId.num,
+        result: successTransactionResult,
+        type: contractCreateType,
+        valid_start_timestamp: parentConsensusTimestamp - 56n,
+      },
+    ]);
+  });
+
+  test('finds the synthetic child contract create details', async () => {
+    const contractDetails = await ContractService.getContractCreateChildByParentConsensusTimestamp(
+      parentConsensusTimestamp,
+      payerId.getEncodedId()
+    );
+
+    expect(contractDetails.consensusTimestamp).toEqual(childConsensusTimestamp);
+    expect(contractDetails.entityId).toEqual(contractId.getEncodedId());
+    expect(contractDetails.payerAccountId).toEqual(payerId.getEncodedId());
+    expect(contractDetails.contractIds).toIncludeSameMembers([contractId.getEncodedId(), payerId.getEncodedId()]);
+  });
+
+  test('returns null when parent consensus timestamp is not found', async () => {
+    await expect(
+      ContractService.getContractCreateChildByParentConsensusTimestamp(
+        parentConsensusTimestamp + 1n,
+        payerId.getEncodedId()
+      )
+    ).resolves.toEqual(null);
+  });
+});

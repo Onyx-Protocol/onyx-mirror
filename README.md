@@ -117,6 +117,17 @@ documentation for more information.
 
 To perform a new release, run the `Automated Release` GitHub workflow.
 
+## Goliath Fork Images
+
+The Goliath Mainnet fork publishes its mirror images from GitHub Actions to GitHub Container Registry instead of using
+the upstream `gcr.io/mirrornode/*` images for fork-specific runtime fixes.
+
+- `ghcr.io/onyx-protocol/goliath-mirror/mirror-importer`
+- `ghcr.io/onyx-protocol/goliath-mirror/mirror-rest`
+
+Goliath Mainnet importer and REST deployments must consume these GHCR images when they depend on fork-only fixes such
+as the Ethereum contract-create child result lookup path.
+
 ## Contributing
 
 Whether you’re fixing bugs, adding new features, or improving documentation, your contributions are important — let's

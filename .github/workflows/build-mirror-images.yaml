@@ -1,0 +1,114 @@
+# SPDX-License-Identifier: Apache-2.0
+
+name: "Build & Publish Mirror Images"
+
+on:
+  push:
+    branches: [main]
+    tags: ["goliath-*", "v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: "Target platforms (comma-separated)"
+        required: false
+        default: "linux/amd64"
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build-and-publish:
+    name: Build & Publish ${{ matrix.component.image_name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        component:
+          - id: importer
+            context: importer
+            image_name: mirror-importer
+          - id: rest
+            context: rest
+            image_name: mirror-rest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Java 25
+        if: matrix.component.id == 'importer'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: Setup Gradle
+        if: matrix.component.id == 'importer'
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build Importer Jar
+        if: matrix.component.id == 'importer'
+        run: ./gradlew :importer:build --no-daemon -x test -x check
+        env:
+          GRADLE_OPTS: "-Xmx6g -Dorg.gradle.parallel=true"
+
+      - name: Get Commit Timestamp
+        id: commit
+        run: echo "source-date=$(git log -1 --pretty=%ct)" >> "${GITHUB_OUTPUT}"
+
+      - name: Docker Metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository }}/${{ matrix.component.image_name }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}},prefix=
+            type=match,pattern=v(.*),group=1
+            type=match,pattern=goliath-(.*),group=1
+            type=sha,prefix=
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and Push Image
+        uses: docker/build-push-action@v6
+        with:
+          push: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
+          platforms: ${{ inputs.platforms || 'linux/amd64' }}
+          build-args: |
+            SOURCE_DATE_EPOCH=${{ steps.commit.outputs.source-date }}
+          context: ${{ matrix.component.context }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Make Package Public
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE_NAME: ${{ matrix.component.image_name }}
+        run: |
+          PACKAGE_NAME="${GITHUB_REPOSITORY#*/}/${IMAGE_NAME}"
+          PACKAGE_NAME="${PACKAGE_NAME//\//%2F}"
+          gh api \
+            --method PUT \
+            -H "Accept: application/vnd.github+json" \
+            "/orgs/${GITHUB_REPOSITORY_OWNER}/packages/container/${PACKAGE_NAME}/visibility" \
+            -f visibility=public 2>/dev/null || echo "Note: Set package visibility to public manually in GitHub Settings > Packages"
