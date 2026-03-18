@@ -206,10 +206,18 @@ class ContractService extends BaseService {
                    from ${ContractTransaction.tableName}
                    where ${ContractTransaction.CONSENSUS_TIMESTAMP} = $1 and ${ContractTransaction.ENTITY_ID} = $2`;
 
-  static contractCreateChildByParentConsensusTimestampQuery = `select ${ContractTransaction.PAYER_ACCOUNT_ID},
-                                              ${ContractTransaction.ENTITY_ID},
-                                              ${ContractTransaction.CONTRACT_IDS},
-                                              ${ContractTransaction.CONSENSUS_TIMESTAMP}
+  static contractCreateChildByParentConsensusTimestampQuery = `select ${ContractTransaction.tableName}.${
+    ContractTransaction.PAYER_ACCOUNT_ID
+  } ${ContractTransaction.PAYER_ACCOUNT_ID},
+                                              ${ContractTransaction.tableName}.${ContractTransaction.ENTITY_ID} ${
+    ContractTransaction.ENTITY_ID
+  },
+                                              ${ContractTransaction.tableName}.${ContractTransaction.CONTRACT_IDS} ${
+    ContractTransaction.CONTRACT_IDS
+  },
+                                              ${ContractTransaction.tableName}.${
+    ContractTransaction.CONSENSUS_TIMESTAMP
+  } ${ContractTransaction.CONSENSUS_TIMESTAMP}
                    from ${ContractTransaction.tableName}
                    join ${Transaction.tableName} ${Transaction.tableAlias}
                      on ${Transaction.getFullName(Transaction.CONSENSUS_TIMESTAMP)} =
