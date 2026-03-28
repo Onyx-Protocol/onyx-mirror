@@ -65,7 +65,7 @@ public abstract class AbstractEntity implements History {
     private byte[] delegationAddress;
 
     @UpsertColumn(coalesce = """
-                            case when coalesce(e_type, type) = ''ACCOUNT'' then coalesce({0}, e_{0}, {1})
+                            case when coalesce(e_type, type) = ''ACCOUNT'' then greatest(coalesce({0}, 0), coalesce(e_{0}, 0))
                                  else coalesce({0}, e_{0})
                             end""")
     private Long ethereumNonce;

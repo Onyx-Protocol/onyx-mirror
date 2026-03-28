@@ -577,27 +577,34 @@ final class EthereumTransactionHandlerTest extends AbstractTransactionHandlerTes
                         recordItem.getTransactionBody().getEthereumTransaction().getCallData()));
     }
 
+    // Goliath divergence: signerNonce is the consumed nonce, not the next nonce.
+    // Modern records must persist signerNonce + 1 (matching the legacy path's +1 semantics).
+    // WRONG_NONCE does not consume a nonce — skip update to prevent regression.
     private static Stream<Arguments> provideNonceOnFailureArguments() {
         long signerNonce = 10L;
+        long nextNonce = signerNonce + 1; // 11 — consumed nonce + 1
         long incrementedNonce = 1235L;
         return Stream.of(
                 Arguments.of(true, ResponseCodeEnum.SUCCESS, incrementedNonce),
-                Arguments.of(false, ResponseCodeEnum.SUCCESS, signerNonce),
+                Arguments.of(false, ResponseCodeEnum.SUCCESS, nextNonce),
                 Arguments.of(true, ResponseCodeEnum.CONTRACT_REVERT_EXECUTED, incrementedNonce),
-                Arguments.of(false, ResponseCodeEnum.CONTRACT_REVERT_EXECUTED, signerNonce),
+                Arguments.of(false, ResponseCodeEnum.CONTRACT_REVERT_EXECUTED, nextNonce),
                 Arguments.of(true, ResponseCodeEnum.MAX_CHILD_RECORDS_EXCEEDED, incrementedNonce),
-                Arguments.of(false, ResponseCodeEnum.MAX_CHILD_RECORDS_EXCEEDED, signerNonce),
+                Arguments.of(false, ResponseCodeEnum.MAX_CHILD_RECORDS_EXCEEDED, nextNonce),
                 Arguments.of(true, ResponseCodeEnum.WRONG_NONCE, null),
-                Arguments.of(false, ResponseCodeEnum.WRONG_NONCE, signerNonce));
+                Arguments.of(false, ResponseCodeEnum.WRONG_NONCE, null));
     }
 
+    // Goliath divergence: signerNonce is the consumed nonce, not the next nonce.
+    // Modern records must persist signerNonce + 1 (matching the legacy path's +1 semantics).
     private static Stream<Arguments> provideUpdateTransactionArguments() {
         long signerNonce = 10L;
+        long nextNonce = signerNonce + 1; // 11 — Goliath: signerNonce is consumed nonce, not next
         long incrementedNonce = 1235L;
         return Stream.of(
                 Arguments.of(true, true, incrementedNonce),
-                Arguments.of(true, false, signerNonce),
+                Arguments.of(true, false, nextNonce),
                 Arguments.of(false, true, incrementedNonce),
-                Arguments.of(false, false, signerNonce));
+                Arguments.of(false, false, nextNonce));
     }
 }

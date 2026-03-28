@@ -259,7 +259,7 @@ class GenericUpsertQueryGeneratorTest extends ImporterIntegrationTest {
                           coalesce(delegation_address, e_delegation_address, null),
                           coalesce(deleted, e_deleted, null),
                           case
-                            when coalesce(e_type, type) = 'ACCOUNT' then coalesce(ethereum_nonce, e_ethereum_nonce, 0)
+                            when coalesce(e_type, type) = 'ACCOUNT' then greatest(coalesce(ethereum_nonce, 0), coalesce(e_ethereum_nonce, 0))
                             else coalesce(ethereum_nonce, e_ethereum_nonce)
                           end,
                           coalesce(evm_address, e_evm_address, null),
@@ -478,7 +478,7 @@ class GenericUpsertQueryGeneratorTest extends ImporterIntegrationTest {
                             coalesce(delegation_address, e_delegation_address, null),
                             coalesce(deleted, e_deleted, null),
                             case
-                              when coalesce(e_type, type) = 'ACCOUNT' then coalesce(ethereum_nonce, e_ethereum_nonce, 0)
+                              when coalesce(e_type, type) = 'ACCOUNT' then greatest(coalesce(ethereum_nonce, 0), coalesce(e_ethereum_nonce, 0))
                               else coalesce(ethereum_nonce, e_ethereum_nonce)
                             end,
                             coalesce(e_evm_address, evm_address, null),
@@ -565,7 +565,7 @@ class GenericUpsertQueryGeneratorTest extends ImporterIntegrationTest {
                           coalesce(delegation_address, e_delegation_address, null),
                           coalesce(deleted, e_deleted, null),
                           case
-                            when coalesce(e_type, type) = 'ACCOUNT' then coalesce(ethereum_nonce, e_ethereum_nonce, 0)
+                            when coalesce(e_type, type) = 'ACCOUNT' then greatest(coalesce(ethereum_nonce, 0), coalesce(e_ethereum_nonce, 0))
                             else coalesce(ethereum_nonce, e_ethereum_nonce)
                           end,
                           coalesce(evm_address, e_evm_address, null),

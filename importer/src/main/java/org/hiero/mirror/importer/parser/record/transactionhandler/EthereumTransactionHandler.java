@@ -161,7 +161,13 @@ final class EthereumTransactionHandler extends AbstractTransactionHandler {
 
         Long nonce = null;
         if (functionResult.hasSignerNonce()) {
-            nonce = functionResult.getSignerNonce().getValue();
+            // Goliath divergence: WRONG_NONCE does not consume a nonce — skip to prevent regression
+            var status = transactionRecord.getReceipt().getStatus();
+            if (status == ResponseCodeEnum.WRONG_NONCE) {
+                return;
+            }
+            // Goliath divergence: signerNonce is the consumed nonce; +1 aligns with next-nonce semantics
+            nonce = functionResult.getSignerNonce().getValue() + 1;
         } else if (recordItem.getHapiVersion().isLessThan(RecordFile.HAPI_VERSION_0_47_0)) {
             var status = transactionRecord.getReceipt().getStatus();
             if (!recordItem.isSuccessful()
