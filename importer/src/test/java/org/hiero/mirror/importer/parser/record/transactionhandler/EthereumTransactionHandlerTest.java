@@ -43,6 +43,7 @@ import org.hiero.mirror.importer.converter.HexToByteArrayConverter;
 import org.hiero.mirror.importer.exception.InvalidDatasetException;
 import org.hiero.mirror.importer.exception.ParserException;
 import org.hiero.mirror.importer.parser.record.ethereum.EthereumTransactionParser;
+import org.hiero.mirror.importer.parser.record.ethereum.EthereumTransactionSenderRecovery;
 import org.hiero.mirror.importer.service.ContractBytecodeService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Disabled;
@@ -68,6 +69,9 @@ final class EthereumTransactionHandlerTest extends AbstractTransactionHandlerTes
     @Mock(strictness = LENIENT)
     private EthereumTransactionParser ethereumTransactionParser;
 
+    @Mock
+    private EthereumTransactionSenderRecovery senderRecovery;
+
     @AfterEach
     void cleanup() {
         entityProperties.getPersist().setTrackNonce(true);
@@ -79,7 +83,7 @@ final class EthereumTransactionHandlerTest extends AbstractTransactionHandlerTes
                 .when(ethereumTransactionParser)
                 .decode(any());
         return new EthereumTransactionHandler(
-                contractBytecodeService, entityListener, entityProperties, ethereumTransactionParser);
+                contractBytecodeService, entityListener, entityProperties, ethereumTransactionParser, senderRecovery);
     }
 
     @Override
@@ -552,6 +556,150 @@ final class EthereumTransactionHandlerTest extends AbstractTransactionHandlerTes
         verify(entityListener, never()).onEthereumTransaction(any());
         verify(ethereumTransactionParser, never()).decode(any());
         assertThat(recordItem.getEntityTransactions()).containsExactlyInAnyOrderEntriesOf(expectedEntityTransactions);
+    }
+
+    @Test
+    void updateTransactionInsufficientGasNoCfrAdvancesNonce() {
+        // Given: INSUFFICIENT_GAS with no CFR, tx body nonce=3
+        var expectedSenderId = domainBuilder.entityId();
+        var ethereumTransaction = domainBuilder.ethereumTransaction(false).get();
+        ethereumTransaction.setNonce(3L);
+        doReturn(ethereumTransaction).when(ethereumTransactionParser).decode(any());
+        doReturn(expectedSenderId).when(senderRecovery).recoverSender(any());
+
+        var recordItem = recordItemBuilder
+                .ethereumTransaction(false)
+                .record(x -> x.clearContractCallResult().clearContractCreateResult())
+                .status(ResponseCodeEnum.INSUFFICIENT_GAS)
+                .build();
+        var transaction = domainBuilder
+                .transaction()
+                .customize(t ->
+                        t.consensusTimestamp(recordItem.getConsensusTimestamp()).entityId(null))
+                .get();
+
+        // When
+        transactionHandler.updateTransaction(transaction, recordItem);
+
+        // Then: nonce advanced to 4
+        verify(entityListener).onEthereumTransaction(any());
+        verify(entityListener)
+                .onEntity(argThat(e -> e.getId() == expectedSenderId.getId()
+                        && e.getEthereumNonce() == 4L
+                        && e.getTimestampRange() == null));
+    }
+
+    @Test
+    void updateTransactionInsufficientGasNoCfrSenderRecoveryFailure() {
+        var ethereumTransaction = domainBuilder.ethereumTransaction(false).get();
+        ethereumTransaction.setNonce(5L);
+        doReturn(ethereumTransaction).when(ethereumTransactionParser).decode(any());
+        doReturn(EntityId.EMPTY).when(senderRecovery).recoverSender(any());
+
+        var recordItem = recordItemBuilder
+                .ethereumTransaction(false)
+                .record(x -> x.clearContractCallResult().clearContractCreateResult())
+                .status(ResponseCodeEnum.INSUFFICIENT_GAS)
+                .build();
+        var transaction = domainBuilder
+                .transaction()
+                .customize(t ->
+                        t.consensusTimestamp(recordItem.getConsensusTimestamp()).entityId(null))
+                .get();
+
+        transactionHandler.updateTransaction(transaction, recordItem);
+
+        verify(entityListener).onEthereumTransaction(any());
+        verify(entityListener, never()).onEntity(any());
+    }
+
+    @Test
+    void updateTransactionMixedNonceSequence() {
+        // Simulate: SUCCESS(n=0) -> INSUFFICIENT_GAS(n=1) -> WRONG_NONCE(n=1) -> SUCCESS(n=2) -> final nonce=3
+        // Each call creates a new recordItem, we verify nonce advancement per call
+
+        var senderId = domainBuilder.entityId();
+
+        // SUCCESS(n=0) with CFR
+        {
+            var ethTx = domainBuilder.ethereumTransaction(false).get();
+            ethTx.setNonce(0L);
+            doReturn(ethTx).when(ethereumTransactionParser).decode(any());
+            var signerNonce = com.google.protobuf.Int64Value.of(0); // consumed nonce
+            var recordItem = recordItemBuilder
+                    .ethereumTransaction(false)
+                    .record(x -> x.getContractCallResultBuilder()
+                            .setSenderId(senderId.toAccountID())
+                            .setSignerNonce(signerNonce))
+                    .build();
+            var transaction = domainBuilder
+                    .transaction()
+                    .customize(t -> t.consensusTimestamp(recordItem.getConsensusTimestamp()))
+                    .get();
+            transactionHandler.updateTransaction(transaction, recordItem);
+            verify(entityListener).onEntity(argThat(e -> e.getEthereumNonce() == 1L));
+        }
+
+        // INSUFFICIENT_GAS(n=1) no CFR
+        {
+            var ethTx = domainBuilder.ethereumTransaction(false).get();
+            ethTx.setNonce(1L);
+            doReturn(ethTx).when(ethereumTransactionParser).decode(any());
+            doReturn(senderId).when(senderRecovery).recoverSender(any());
+            var recordItem = recordItemBuilder
+                    .ethereumTransaction(false)
+                    .record(x -> x.clearContractCallResult().clearContractCreateResult())
+                    .status(ResponseCodeEnum.INSUFFICIENT_GAS)
+                    .build();
+            var transaction = domainBuilder
+                    .transaction()
+                    .customize(t -> t.consensusTimestamp(recordItem.getConsensusTimestamp())
+                            .entityId(null))
+                    .get();
+            transactionHandler.updateTransaction(transaction, recordItem);
+            verify(entityListener, times(2)).onEntity(argThat(e -> e.getId() == senderId.getId()));
+        }
+
+        // WRONG_NONCE(n=1) no CFR — should NOT advance
+        {
+            var ethTx = domainBuilder.ethereumTransaction(false).get();
+            ethTx.setNonce(1L);
+            doReturn(ethTx).when(ethereumTransactionParser).decode(any());
+            var recordItem = recordItemBuilder
+                    .ethereumTransaction(false)
+                    .record(x -> x.clearContractCallResult().clearContractCreateResult())
+                    .status(ResponseCodeEnum.WRONG_NONCE)
+                    .build();
+            var transaction = domainBuilder
+                    .transaction()
+                    .customize(t -> t.consensusTimestamp(recordItem.getConsensusTimestamp())
+                            .entityId(null))
+                    .get();
+            transactionHandler.updateTransaction(transaction, recordItem);
+            // Still 2 total onEntity calls (not 3)
+            verify(entityListener, times(2)).onEntity(argThat(e -> e.getId() == senderId.getId()));
+        }
+
+        // SUCCESS(n=2) with CFR
+        {
+            var ethTx = domainBuilder.ethereumTransaction(false).get();
+            ethTx.setNonce(2L);
+            doReturn(ethTx).when(ethereumTransactionParser).decode(any());
+            var signerNonce = com.google.protobuf.Int64Value.of(2);
+            var recordItem = recordItemBuilder
+                    .ethereumTransaction(false)
+                    .record(x -> x.getContractCallResultBuilder()
+                            .setSenderId(senderId.toAccountID())
+                            .setSignerNonce(signerNonce))
+                    .build();
+            var transaction = domainBuilder
+                    .transaction()
+                    .customize(t -> t.consensusTimestamp(recordItem.getConsensusTimestamp()))
+                    .get();
+            transactionHandler.updateTransaction(transaction, recordItem);
+            // 3rd onEntity call with nonce=3
+            verify(entityListener, times(3)).onEntity(argThat(e -> e.getId() == senderId.getId()));
+        }
     }
 
     @SuppressWarnings("java:S2699")

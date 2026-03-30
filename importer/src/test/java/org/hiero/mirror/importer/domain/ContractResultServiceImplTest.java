@@ -5,7 +5,8 @@ package org.hiero.mirror.importer.domain;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mock.Strictness.LENIENT;
-import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -40,6 +41,7 @@ import org.hiero.mirror.importer.migration.SidecarContractMigration;
 import org.hiero.mirror.importer.parser.domain.RecordItemBuilder;
 import org.hiero.mirror.importer.parser.record.entity.EntityListener;
 import org.hiero.mirror.importer.parser.record.entity.EntityProperties;
+import org.hiero.mirror.importer.parser.record.ethereum.EthereumTransactionSenderRecovery;
 import org.hiero.mirror.importer.parser.record.transactionhandler.EvmHookStorageHandler;
 import org.hiero.mirror.importer.parser.record.transactionhandler.TransactionHandler;
 import org.hiero.mirror.importer.parser.record.transactionhandler.TransactionHandlerFactory;
@@ -95,6 +97,9 @@ final class ContractResultServiceImplTest {
 
     @Mock
     private EvmHookStorageHandler evmHookStorageHandler;
+
+    @Mock
+    private EthereumTransactionSenderRecovery senderRecovery;
 
     private ContractResultService contractResultService;
 
@@ -152,8 +157,9 @@ final class ContractResultServiceImplTest {
 
     @BeforeEach
     void beforeEach() {
-        doReturn(transactionHandler).when(transactionHandlerFactory).get(any(TransactionType.class));
-        when(importerProperties.getSmartContractThrottlingVersion())
+        lenient().doReturn(transactionHandler).when(transactionHandlerFactory).get(any(TransactionType.class));
+        lenient()
+                .when(importerProperties.getSmartContractThrottlingVersion())
                 .thenReturn(DEFAULT_SMART_CONTRACT_THROTTLING_HAPI_VERSION);
 
         contractResultService = new ContractResultServiceImpl(
@@ -164,7 +170,8 @@ final class ContractResultServiceImplTest {
                 importerProperties,
                 sidecarContractMigration,
                 transactionHandlerFactory,
-                evmHookStorageHandler);
+                evmHookStorageHandler,
+                senderRecovery);
     }
 
     @ParameterizedTest
@@ -360,5 +367,101 @@ final class ContractResultServiceImplTest {
             verify(evmHookStorageHandler, times(0))
                     .processStorageUpdatesForSidecar(any(Long.class), any(Long.class), any(Long.class), any());
         }
+    }
+
+    @Test
+    void ethereumTransactionNoCfrFailedSenderAttribution() {
+        // Given: INSUFFICIENT_GAS, recovered sender differs from payer
+        var recoveredSenderId = EntityId.of(1267L);
+        var payerAccountId = EntityId.of(1011L);
+        when(senderRecovery.recoverSender(any())).thenReturn(recoveredSenderId);
+
+        var ethTx = domainBuilder.ethereumTransaction(false).get();
+        var recordItem = recordItemBuilder
+                .ethereumTransaction(false)
+                .record(x -> x.clearContractCallResult().clearContractCreateResult())
+                .status(ResponseCodeEnum.INSUFFICIENT_GAS)
+                .recordItem(r -> r.ethereumTransaction(ethTx))
+                .build();
+        var transaction = domainBuilder
+                .transaction()
+                .customize(t -> t.payerAccountId(payerAccountId))
+                .get();
+
+        var contractResultCaptor = ArgumentCaptor.forClass(ContractResult.class);
+
+        // When
+        contractResultService.process(recordItem, transaction);
+
+        // Then
+        verify(entityListener).onContractResult(contractResultCaptor.capture());
+        assertThat(contractResultCaptor.getValue().getSenderId()).isEqualTo(recoveredSenderId);
+    }
+
+    @Test
+    void ethereumTransactionNoCfrSuccessCreatesContractResult() {
+        var recoveredSenderId = EntityId.of(1267L);
+        when(senderRecovery.recoverSender(any())).thenReturn(recoveredSenderId);
+
+        var ethTx = domainBuilder.ethereumTransaction(false).get();
+        var recordItem = recordItemBuilder
+                .ethereumTransaction(false)
+                .record(x -> x.clearContractCallResult().clearContractCreateResult())
+                .status(ResponseCodeEnum.SUCCESS)
+                .recordItem(r -> r.ethereumTransaction(ethTx))
+                .build();
+        var transaction = domainBuilder.transaction().get();
+
+        var contractResultCaptor = ArgumentCaptor.forClass(ContractResult.class);
+
+        contractResultService.process(recordItem, transaction);
+
+        verify(entityListener).onContractResult(contractResultCaptor.capture());
+        var result = contractResultCaptor.getValue();
+        assertThat(result.getSenderId()).isEqualTo(recoveredSenderId);
+        assertThat(result.getGasUsed()).isNotNull();
+    }
+
+    @Test
+    void ethereumTransactionNoCfrSenderRecoveryFallsToPayer() {
+        var payerAccountId = EntityId.of(1011L);
+        when(senderRecovery.recoverSender(any())).thenReturn(EntityId.EMPTY);
+
+        var ethTx = domainBuilder.ethereumTransaction(false).get();
+        var recordItem = recordItemBuilder
+                .ethereumTransaction(false)
+                .record(x -> x.clearContractCallResult().clearContractCreateResult())
+                .status(ResponseCodeEnum.INSUFFICIENT_GAS)
+                .recordItem(r -> r.ethereumTransaction(ethTx))
+                .build();
+        var transaction = domainBuilder
+                .transaction()
+                .customize(t -> t.payerAccountId(payerAccountId))
+                .get();
+
+        var contractResultCaptor = ArgumentCaptor.forClass(ContractResult.class);
+
+        contractResultService.process(recordItem, transaction);
+
+        verify(entityListener).onContractResult(contractResultCaptor.capture());
+        assertThat(contractResultCaptor.getValue().getSenderId()).isEqualTo(payerAccountId);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"WRONG_NONCE", "DUPLICATE_TRANSACTION"})
+    void ethereumTransactionNoCfrSkipNonConsuming(String statusName) {
+        var status = ResponseCodeEnum.valueOf(statusName);
+        var ethTx = domainBuilder.ethereumTransaction(false).get();
+        var recordItem = recordItemBuilder
+                .ethereumTransaction(false)
+                .record(x -> x.clearContractCallResult().clearContractCreateResult())
+                .status(status)
+                .recordItem(r -> r.ethereumTransaction(ethTx))
+                .build();
+        var transaction = domainBuilder.transaction().get();
+
+        contractResultService.process(recordItem, transaction);
+
+        verify(entityListener, never()).onContractResult(any());
     }
 }

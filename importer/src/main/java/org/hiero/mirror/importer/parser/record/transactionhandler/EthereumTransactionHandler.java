@@ -5,6 +5,7 @@ package org.hiero.mirror.importer.parser.record.transactionhandler;
 import com.hederahashgraph.api.proto.java.ResponseCodeEnum;
 import jakarta.inject.Named;
 import java.math.BigInteger;
+import lombok.CustomLog;
 import lombok.RequiredArgsConstructor;
 import org.apache.commons.lang3.ArrayUtils;
 import org.hiero.mirror.common.converter.WeiBarTinyBarConverter;
@@ -19,9 +20,11 @@ import org.hiero.mirror.common.util.DomainUtils;
 import org.hiero.mirror.importer.parser.record.entity.EntityListener;
 import org.hiero.mirror.importer.parser.record.entity.EntityProperties;
 import org.hiero.mirror.importer.parser.record.ethereum.EthereumTransactionParser;
+import org.hiero.mirror.importer.parser.record.ethereum.EthereumTransactionSenderRecovery;
 import org.hiero.mirror.importer.service.ContractBytecodeService;
 import org.hiero.mirror.importer.util.Utility;
 
+@CustomLog
 @Named
 @RequiredArgsConstructor
 final class EthereumTransactionHandler extends AbstractTransactionHandler {
@@ -30,6 +33,7 @@ final class EthereumTransactionHandler extends AbstractTransactionHandler {
     private final EntityListener entityListener;
     private final EntityProperties entityProperties;
     private final EthereumTransactionParser ethereumTransactionParser;
+    private final EthereumTransactionSenderRecovery senderRecovery;
 
     /**
      * Attempts to extract the contract ID from the ethereumTransaction.
@@ -148,6 +152,14 @@ final class EthereumTransactionHandler extends AbstractTransactionHandler {
 
         var transactionRecord = recordItem.getTransactionRecord();
         if (!transactionRecord.hasContractCallResult() && !transactionRecord.hasContractCreateResult()) {
+            // No CFR present. Some statuses still consume nonce at consensus.
+            var status = transactionRecord.getReceipt().getStatus();
+            if (status == ResponseCodeEnum.WRONG_NONCE || status == ResponseCodeEnum.DUPLICATE_TRANSACTION) {
+                return;
+            }
+            if (!recordItem.isSuccessful()) {
+                advanceNonceFromTxBody(recordItem, ethereumTransaction);
+            }
             return;
         }
 
@@ -187,6 +199,30 @@ final class EthereumTransactionHandler extends AbstractTransactionHandler {
             entityListener.onEntity(entity);
             recordItem.addEntityId(senderId);
         }
+    }
+
+    private void advanceNonceFromTxBody(RecordItem recordItem, EthereumTransaction ethereumTransaction) {
+        Long nonce = ethereumTransaction.getNonce();
+        if (nonce == null) {
+            return;
+        }
+        long nextNonce = nonce + 1;
+
+        EntityId senderId = senderRecovery.recoverSender(ethereumTransaction);
+        if (EntityId.isEmpty(senderId)) {
+            log.warn(
+                    "Could not recover sender for EthereumTransaction at {} with status {}. "
+                            + "Nonce advancement skipped.",
+                    recordItem.getConsensusTimestamp(),
+                    recordItem.getTransactionRecord().getReceipt().getStatus());
+            return;
+        }
+
+        var entity = senderId.toEntity();
+        entity.setEthereumNonce(nextNonce);
+        entity.setTimestampRange(null);
+        entityListener.onEntity(entity);
+        recordItem.addEntityId(senderId);
     }
 
     private void convertGasWeiToTinyBars(EthereumTransaction transaction) {

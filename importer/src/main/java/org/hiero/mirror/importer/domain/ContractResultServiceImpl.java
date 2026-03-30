@@ -21,6 +21,7 @@ import org.hiero.mirror.common.domain.contract.ContractResult;
 import org.hiero.mirror.common.domain.entity.Entity;
 import org.hiero.mirror.common.domain.entity.EntityId;
 import org.hiero.mirror.common.domain.entity.EntityType;
+import org.hiero.mirror.common.domain.transaction.EthereumTransaction;
 import org.hiero.mirror.common.domain.transaction.RecordFile;
 import org.hiero.mirror.common.domain.transaction.RecordItem;
 import org.hiero.mirror.common.domain.transaction.Transaction;
@@ -31,6 +32,7 @@ import org.hiero.mirror.importer.ImporterProperties;
 import org.hiero.mirror.importer.migration.SidecarContractMigration;
 import org.hiero.mirror.importer.parser.record.entity.EntityListener;
 import org.hiero.mirror.importer.parser.record.entity.EntityProperties;
+import org.hiero.mirror.importer.parser.record.ethereum.EthereumTransactionSenderRecovery;
 import org.hiero.mirror.importer.parser.record.transactionhandler.EvmHookStorageHandler;
 import org.hiero.mirror.importer.parser.record.transactionhandler.TransactionHandler;
 import org.hiero.mirror.importer.parser.record.transactionhandler.TransactionHandlerFactory;
@@ -52,6 +54,7 @@ final class ContractResultServiceImpl implements ContractResultService {
     private final SidecarContractMigration sidecarContractMigration;
     private final TransactionHandlerFactory transactionHandlerFactory;
     private final EvmHookStorageHandler evmHookStorageHandler;
+    private final EthereumTransactionSenderRecovery senderRecovery;
 
     @Override
     @SuppressWarnings("java:S2259")
@@ -70,8 +73,7 @@ final class ContractResultServiceImpl implements ContractResultService {
         // handle non create/call transactions
         boolean contractCallOrCreate = isContractCreateOrCall(transaction);
         if (!contractCallOrCreate && !isContractFunctionResultSet(functionResult)) {
-            addDefaultEthereumTransactionContractResult(recordItem, transaction);
-            // skip any other transaction which is neither a create/call and has no valid ContractFunctionResult
+            addEthereumTransactionContractResult(recordItem, transaction, sidecarProcessingResult);
             return;
         }
 
@@ -90,41 +92,83 @@ final class ContractResultServiceImpl implements ContractResultService {
                 recordItem, contractId, functionResult, transaction, transactionHandler, sidecarProcessingResult);
     }
 
-    private void addDefaultEthereumTransactionContractResult(RecordItem recordItem, Transaction transaction) {
+    /**
+     * Creates a contract_result row for EthereumTransactions when the consensus node does not include a
+     * ContractFunctionResult in the record stream. Uses sidecar ContractActions for gasUsed, receipt for
+     * contractId, and ecrecover for sender attribution.
+     *
+     * <p>This method becomes unreachable once the consensus node is fixed to include CFR — the standard
+     * processContractResult() path will take over because isContractFunctionResultSet() will return true.
+     */
+    private void addEthereumTransactionContractResult(
+            RecordItem recordItem, Transaction transaction, SidecarProcessingResult sidecarProcessingResult) {
         if (!entityProperties.getPersist().isContractResults()) {
+            return;
+        }
+        if (!recordItem.getTransactionBody().hasEthereumTransaction()) {
             return;
         }
 
         var status = recordItem.getTransactionRecord().getReceipt().getStatus();
-        if (recordItem.isSuccessful()
-                || status == ResponseCodeEnum.DUPLICATE_TRANSACTION
-                || status == ResponseCodeEnum.WRONG_NONCE
-                || !recordItem.getTransactionBody().hasEthereumTransaction()) {
-            // Don't add default contract result for the transaction if it's successful, or the result is
-            // DUPLICATE_TRANSACTION, or the result is WRONG_NONCE, or it's not an ethereum transaction
+        if (status == ResponseCodeEnum.DUPLICATE_TRANSACTION || status == ResponseCodeEnum.WRONG_NONCE) {
             return;
         }
 
         var ethereumTransaction = recordItem.getEthereumTransaction();
+        if (ethereumTransaction == null) {
+            return;
+        }
+
         var functionParameters = ethereumTransaction.getCallData() != null
                 ? ethereumTransaction.getCallData()
                 : DomainUtils.EMPTY_BYTE_ARRAY;
+
         var payerAccountId = transaction.getPayerAccountId();
+        var senderId = recoverSenderOrPayer(ethereumTransaction, payerAccountId);
+
+        var receipt = recordItem.getTransactionRecord().getReceipt();
+        var contractEntityId = receipt.hasContractID() ? EntityId.of(receipt.getContractID()) : EntityId.EMPTY;
+
+        var gasUsed = sidecarProcessingResult.totalGasUsed() != null ? sidecarProcessingResult.totalGasUsed() : 0L;
+
         var contractResult = ContractResult.builder()
                 .callResult(DomainUtils.EMPTY_BYTE_ARRAY)
                 .consensusTimestamp(transaction.getConsensusTimestamp())
-                .contractId(0)
+                .contractId(contractEntityId.getId())
                 .functionParameters(functionParameters)
                 .gasLimit(ethereumTransaction.getGasLimit())
-                .gasUsed(0L)
+                .gasUsed(gasUsed)
                 .payerAccountId(payerAccountId)
-                .senderId(payerAccountId)
+                .senderId(senderId)
                 .transactionHash(ethereumTransaction.getHash())
                 .transactionIndex(transaction.getIndex())
                 .transactionNonce(transaction.getNonce())
                 .transactionResult(transaction.getResult())
                 .build();
+
+        if (!EntityId.isEmpty(contractEntityId)) {
+            recordItem.addContractTransaction(contractEntityId);
+        }
+        recordItem.addContractTransaction(payerAccountId);
         entityListener.onContractResult(contractResult);
+    }
+
+    private EntityId recoverSenderOrPayer(EthereumTransaction ethereumTransaction, EntityId payerAccountId) {
+        if (ethereumTransaction == null) {
+            return payerAccountId;
+        }
+        try {
+            var senderId = senderRecovery.recoverSender(ethereumTransaction);
+            if (!EntityId.isEmpty(senderId)) {
+                return senderId;
+            }
+        } catch (Exception e) {
+            log.warn(
+                    "Failed to recover sender for EthereumTransaction at {}, falling back to payer",
+                    ethereumTransaction.getConsensusTimestamp(),
+                    e);
+        }
+        return payerAccountId;
     }
 
     private boolean isContractFunctionResultSet(ContractFunctionResult contractFunctionResult) {
