@@ -157,9 +157,9 @@ final class EthereumTransactionHandler extends AbstractTransactionHandler {
             if (status == ResponseCodeEnum.WRONG_NONCE || status == ResponseCodeEnum.DUPLICATE_TRANSACTION) {
                 return;
             }
-            if (!recordItem.isSuccessful()) {
-                advanceNonceFromTxBody(recordItem, ethereumTransaction);
-            }
+            // Advance nonce for ALL other statuses (SUCCESS, INSUFFICIENT_GAS, etc.)
+            // WRONG_NONCE and DUPLICATE_TRANSACTION are already filtered above.
+            advanceNonceFromTxBody(recordItem, ethereumTransaction);
             return;
         }
 
