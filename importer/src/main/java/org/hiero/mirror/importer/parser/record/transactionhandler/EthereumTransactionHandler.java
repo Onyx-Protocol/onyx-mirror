@@ -131,11 +131,14 @@ final class EthereumTransactionHandler extends AbstractTransactionHandler {
                 ethereumTransaction.setHash(hash);
             }
 
+            // Advance nonce BEFORE gas conversion — ecrecover needs original weibar values
+            // to reconstruct the signing hash that matches the sender's signature.
+            updateAccountNonce(recordItem, ethereumTransaction);
+
             // EVM logic uses weibar for gas values, convert transaction body gas values to tinybars
             convertGasWeiToTinyBars(ethereumTransaction);
 
             entityListener.onEthereumTransaction(ethereumTransaction);
-            updateAccountNonce(recordItem, ethereumTransaction);
             recordItem.setEthereumTransaction(ethereumTransaction);
 
             recordItem.addEntityId(ethereumTransaction.getCallDataId());
