@@ -1,0 +1,138 @@
+{
+  "description": "Contract results api call returns the parent ethereum transaction hash even when child contract-create has a different hash (ERC-4337 handleOps scenario)",
+  "setup": {
+    "entities": [
+      {
+        "num": 5002,
+        "evm_address": "0xa1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+      }
+    ],
+    "contractresults": [
+      {
+        "amount": 0,
+        "bloom": [],
+        "call_result": [6, 6],
+        "consensus_timestamp": "167654000223456",
+        "contract_id": 8001,
+        "created_contract_ids": [],
+        "error_message": "",
+        "function_parameters": [7, 7],
+        "function_result": [],
+        "gas_consumed": 0,
+        "gas_limit": 1288853,
+        "gas_used": 0,
+        "payer_account_id": 8001,
+        "sender_id": 8001,
+        "transaction_result": 22,
+        "transaction_hash": "aa11bb22cc33dd44ee55ff6677889900aabbccddeeff00112233445566778899",
+        "transaction_index": 0,
+        "transaction_nonce": 0
+      },
+      {
+        "amount": 0,
+        "bloom": [],
+        "call_result": [],
+        "consensus_timestamp": "167654000223457",
+        "contract_id": 5002,
+        "created_contract_ids": [5002],
+        "error_message": "",
+        "function_parameters": [],
+        "function_result": [],
+        "gas_consumed": 0,
+        "gas_limit": 0,
+        "gas_used": 0,
+        "payer_account_id": 8001,
+        "sender_id": 8001,
+        "transaction_result": 22,
+        "transaction_hash": "ff00ee11dd22cc33bb44aa5599887766ffeeddccbbaa00112233445566778899",
+        "transaction_index": 1,
+        "transaction_nonce": 1
+      }
+    ],
+    "recordFiles": [
+      {
+        "index": 18,
+        "gas_used": 50000000,
+        "consensus_start": 167654000223450,
+        "consensus_end": 167654000223460,
+        "hash": "7deecd8bb224da492"
+      }
+    ],
+    "transactions": [
+      {
+        "consensus_timestamp": 167654000223456,
+        "entity_id": 8001,
+        "payerAccountId": "8001",
+        "transaction_hash": "519a008fabde5e",
+        "type": 50,
+        "valid_start_timestamp": 167654000223400
+      },
+      {
+        "consensus_timestamp": 167654000223457,
+        "entity_id": 5002,
+        "parent_consensus_timestamp": 167654000223456,
+        "payerAccountId": "8001",
+        "transaction_hash": "519a008fabde5e",
+        "type": 8,
+        "valid_start_timestamp": 167654000223400
+      }
+    ],
+    "ethereumtransactions": [
+      {
+        "call_data": "0x1fad948c",
+        "consensus_timestamp": 167654000223456,
+        "hash": "aa11bb22cc33dd44ee55ff6677889900aabbccddeeff00112233445566778899",
+        "payer_account_id": "8001",
+        "value": "0x00",
+        "to_address": "0x5ff137d4b0fdcd49dca30c7cf57e578a026d2789"
+      }
+    ],
+    "sql": {
+      "pathprefix": "specs/contracts/results/{id}",
+      "scripts": [
+        "ethereum-transaction-call-with-child-create-different-hash.sql"
+      ]
+    }
+  },
+  "urls": [
+    "/api/v1/contracts/results/aa11bb22cc33dd44ee55ff6677889900aabbccddeeff00112233445566778899",
+    "/api/v1/contracts/results/0xaa11bb22cc33dd44ee55ff6677889900aabbccddeeff00112233445566778899"
+  ],
+  "responseStatus": 200,
+  "responseJson": {
+    "access_list": "0x",
+    "amount": 0,
+    "block_gas_used": 50000000,
+    "block_hash": "0x7deecd8bb224da492",
+    "block_number": 18,
+    "bloom": "0x",
+    "call_result": "0x",
+    "chain_id": "0x",
+    "contract_id": "0.0.5002",
+    "created_contract_ids": ["0.0.5002"],
+    "error_message": null,
+    "address": "0xa1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+    "failed_initcode": null,
+    "from": "0x0000000000000000000000000000000000001f41",
+    "function_parameters": "0x1fad948c",
+    "gas_consumed": 0,
+    "gas_limit": 0,
+    "gas_price": null,
+    "gas_used": 0,
+    "hash": "0xaa11bb22cc33dd44ee55ff6677889900aabbccddeeff00112233445566778899",
+    "logs": [],
+    "max_fee_per_gas": "0x",
+    "max_priority_fee_per_gas": "0x",
+    "nonce": 1,
+    "r": "0xd693b532a80fed6392b428604171fb32fdbf953728a3a7ecc7d4062b1652c042",
+    "result": "SUCCESS",
+    "s": "0x24e9c602ac800b983b035700a14b23f78a253ab762deab5dc27e3555a750b354",
+    "state_changes": [],
+    "status": "0x1",
+    "timestamp": "167654.000223457",
+    "to": "0x5ff137d4b0fdcd49dca30c7cf57e578a026d2789",
+    "transaction_index": 1,
+    "type": 2,
+    "v": 1
+  }
+}

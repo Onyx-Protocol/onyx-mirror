@@ -1176,6 +1176,15 @@ class ContractController extends BaseController {
     const contractResult = contractResults[0];
     const ethTransaction = ethTransactions[0];
 
+    // When looking up by eth hash, the child-first logic may return a child contract_result
+    // with a different hash (e.g. ERC-4337 handleOps creates a child CONTRACTCREATEINSTANCE
+    // with its own hash). The receipt must always use the ethereum_transaction hash — that's
+    // the hash the user signed and wallets track. For direct CREATEs, parent and child share
+    // the same hash so this is a no-op.
+    if (utils.isValidEthHash(transactionIdOrHash) && ethTransaction?.hash) {
+      contractResult.transactionHash = ethTransaction.hash;
+    }
+
     let fileData = null;
 
     if (utils.isValidUserFileId(ethTransaction?.callDataId)) {
