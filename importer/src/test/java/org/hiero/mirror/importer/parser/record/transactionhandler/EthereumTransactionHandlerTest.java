@@ -14,6 +14,7 @@ import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mock.Strictness.LENIENT;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
@@ -29,6 +30,7 @@ import com.hederahashgraph.api.proto.java.TransactionBody;
 import com.hederahashgraph.api.proto.java.TransactionRecord;
 import java.math.BigInteger;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 import org.hiero.mirror.common.domain.contract.ContractResult;
 import org.hiero.mirror.common.domain.entity.EntityId;
@@ -586,6 +588,90 @@ final class EthereumTransactionHandlerTest extends AbstractTransactionHandlerTes
         verify(entityListener)
                 .onEntity(argThat(e -> e.getId() == expectedSenderId.getId()
                         && e.getEthereumNonce() == 4L
+                        && e.getTimestampRange() == null));
+    }
+
+    @Test
+    void updateTransactionSuccessNoCfrAdvancesNonceFromTxBody() {
+        var expectedSenderId = domainBuilder.entityId();
+        var ethereumTransaction = domainBuilder.ethereumTransaction(false).get();
+        ethereumTransaction.setNonce(7L);
+        doReturn(ethereumTransaction).when(ethereumTransactionParser).decode(any());
+        doReturn(expectedSenderId).when(senderRecovery).recoverSender(any());
+
+        var recordItem = recordItemBuilder
+                .ethereumTransaction(false)
+                .record(x -> x.clearContractCallResult().clearContractCreateResult())
+                .status(ResponseCodeEnum.SUCCESS)
+                .build();
+        var transaction = domainBuilder
+                .transaction()
+                .customize(t ->
+                        t.consensusTimestamp(recordItem.getConsensusTimestamp()).entityId(null))
+                .get();
+
+        transactionHandler.updateTransaction(transaction, recordItem);
+
+        verify(senderRecovery).recoverSender(any());
+        verify(entityListener).onEthereumTransaction(any());
+        verify(entityListener)
+                .onEntity(argThat(e -> e.getId() == expectedSenderId.getId()
+                        && e.getEthereumNonce() == 8L
+                        && e.getTimestampRange() == null));
+    }
+
+    @Test
+    void updateTransactionSuccessNoCfrRecoverSenderBeforeGasConversion() {
+        var expectedSenderId = domainBuilder.entityId();
+        var ethereumTransaction = domainBuilder.ethereumTransaction(false).get();
+        var originalGasPrice = BigInteger.valueOf(49_000_000_000L).toByteArray();
+        var originalMaxFeePerGas = BigInteger.valueOf(57_000_000_000L).toByteArray();
+        var originalMaxPriorityFeePerGas = BigInteger.valueOf(11_000_000_000L).toByteArray();
+        var originalValue = BigInteger.valueOf(87_000_000_000L).toByteArray();
+        var recoveredGasPrice = new AtomicReference<byte[]>();
+        var recoveredMaxFeePerGas = new AtomicReference<byte[]>();
+        var recoveredMaxPriorityFeePerGas = new AtomicReference<byte[]>();
+        var recoveredValue = new AtomicReference<byte[]>();
+
+        ethereumTransaction.setNonce(9L);
+        ethereumTransaction.setGasPrice(originalGasPrice);
+        ethereumTransaction.setMaxFeePerGas(originalMaxFeePerGas);
+        ethereumTransaction.setMaxPriorityFeePerGas(originalMaxPriorityFeePerGas);
+        ethereumTransaction.setValue(originalValue);
+        doReturn(ethereumTransaction).when(ethereumTransactionParser).decode(any());
+        doAnswer(invocation -> {
+                    var recoveredTransaction = invocation.getArgument(0, EthereumTransaction.class);
+                    recoveredGasPrice.set(recoveredTransaction.getGasPrice().clone());
+                    recoveredMaxFeePerGas.set(
+                            recoveredTransaction.getMaxFeePerGas().clone());
+                    recoveredMaxPriorityFeePerGas.set(
+                            recoveredTransaction.getMaxPriorityFeePerGas().clone());
+                    recoveredValue.set(recoveredTransaction.getValue().clone());
+                    return expectedSenderId;
+                })
+                .when(senderRecovery)
+                .recoverSender(any());
+
+        var recordItem = recordItemBuilder
+                .ethereumTransaction(false)
+                .record(x -> x.clearContractCallResult().clearContractCreateResult())
+                .status(ResponseCodeEnum.SUCCESS)
+                .build();
+        var transaction = domainBuilder
+                .transaction()
+                .customize(t ->
+                        t.consensusTimestamp(recordItem.getConsensusTimestamp()).entityId(null))
+                .get();
+
+        transactionHandler.updateTransaction(transaction, recordItem);
+
+        assertThat(recoveredGasPrice.get()).isEqualTo(originalGasPrice);
+        assertThat(recoveredMaxFeePerGas.get()).isEqualTo(originalMaxFeePerGas);
+        assertThat(recoveredMaxPriorityFeePerGas.get()).isEqualTo(originalMaxPriorityFeePerGas);
+        assertThat(recoveredValue.get()).isEqualTo(originalValue);
+        verify(entityListener)
+                .onEntity(argThat(e -> e.getId() == expectedSenderId.getId()
+                        && e.getEthereumNonce() == 10L
                         && e.getTimestampRange() == null));
     }
 
