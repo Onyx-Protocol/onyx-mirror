@@ -560,9 +560,9 @@ final class EthereumTransactionHandlerTest extends AbstractTransactionHandlerTes
         assertThat(recordItem.getEntityTransactions()).containsExactlyInAnyOrderEntriesOf(expectedEntityTransactions);
     }
 
-    @Test
-    void updateTransactionInsufficientGasNoCfrAdvancesNonce() {
-        // Given: INSUFFICIENT_GAS with no CFR, tx body nonce=3
+    @ParameterizedTest
+    @MethodSource("provideNoCfrConsumingStatuses")
+    void updateTransactionNoCfrAllowlistedStatusAdvancesNonce(ResponseCodeEnum status) {
         var expectedSenderId = domainBuilder.entityId();
         var ethereumTransaction = domainBuilder.ethereumTransaction(false).get();
         ethereumTransaction.setNonce(3L);
@@ -572,7 +572,7 @@ final class EthereumTransactionHandlerTest extends AbstractTransactionHandlerTes
         var recordItem = recordItemBuilder
                 .ethereumTransaction(false)
                 .record(x -> x.clearContractCallResult().clearContractCreateResult())
-                .status(ResponseCodeEnum.INSUFFICIENT_GAS)
+                .status(status)
                 .build();
         var transaction = domainBuilder
                 .transaction()
@@ -580,10 +580,9 @@ final class EthereumTransactionHandlerTest extends AbstractTransactionHandlerTes
                         t.consensusTimestamp(recordItem.getConsensusTimestamp()).entityId(null))
                 .get();
 
-        // When
         transactionHandler.updateTransaction(transaction, recordItem);
 
-        // Then: nonce advanced to 4
+        verify(senderRecovery).recoverSender(any());
         verify(entityListener).onEthereumTransaction(any());
         verify(entityListener)
                 .onEntity(argThat(e -> e.getId() == expectedSenderId.getId()
@@ -676,7 +675,7 @@ final class EthereumTransactionHandlerTest extends AbstractTransactionHandlerTes
     }
 
     @Test
-    void updateTransactionInsufficientGasNoCfrSenderRecoveryFailure() {
+    void updateTransactionNoCfrAllowlistedStatusSenderRecoveryFailure() {
         var ethereumTransaction = domainBuilder.ethereumTransaction(false).get();
         ethereumTransaction.setNonce(5L);
         doReturn(ethereumTransaction).when(ethereumTransactionParser).decode(any());
@@ -685,7 +684,7 @@ final class EthereumTransactionHandlerTest extends AbstractTransactionHandlerTes
         var recordItem = recordItemBuilder
                 .ethereumTransaction(false)
                 .record(x -> x.clearContractCallResult().clearContractCreateResult())
-                .status(ResponseCodeEnum.INSUFFICIENT_GAS)
+                .status(ResponseCodeEnum.CONTRACT_REVERT_EXECUTED)
                 .build();
         var transaction = domainBuilder
                 .transaction()
@@ -699,9 +698,34 @@ final class EthereumTransactionHandlerTest extends AbstractTransactionHandlerTes
         verify(entityListener, never()).onEntity(any());
     }
 
+    @ParameterizedTest
+    @MethodSource("provideNoCfrSkippedStatuses")
+    void updateTransactionNoCfrSkippedStatusDoesNotAdvanceNonce(ResponseCodeEnum status) {
+        var ethereumTransaction = domainBuilder.ethereumTransaction(false).get();
+        ethereumTransaction.setNonce(5L);
+        doReturn(ethereumTransaction).when(ethereumTransactionParser).decode(any());
+
+        var recordItem = recordItemBuilder
+                .ethereumTransaction(false)
+                .record(x -> x.clearContractCallResult().clearContractCreateResult())
+                .status(status)
+                .build();
+        var transaction = domainBuilder
+                .transaction()
+                .customize(t ->
+                        t.consensusTimestamp(recordItem.getConsensusTimestamp()).entityId(null))
+                .get();
+
+        transactionHandler.updateTransaction(transaction, recordItem);
+
+        verify(entityListener).onEthereumTransaction(any());
+        verify(entityListener, never()).onEntity(any());
+        verify(senderRecovery, never()).recoverSender(any());
+    }
+
     @Test
     void updateTransactionMixedNonceSequence() {
-        // Simulate: SUCCESS(n=0) -> INSUFFICIENT_GAS(n=1) -> WRONG_NONCE(n=1) -> SUCCESS(n=2) -> final nonce=3
+        // Simulate: SUCCESS(n=0) -> CONTRACT_REVERT_EXECUTED(n=1) -> WRONG_NONCE(n=1) -> SUCCESS(n=2) -> final nonce=3
         // Each call creates a new recordItem, we verify nonce advancement per call
 
         var senderId = domainBuilder.entityId();
@@ -726,7 +750,7 @@ final class EthereumTransactionHandlerTest extends AbstractTransactionHandlerTes
             verify(entityListener).onEntity(argThat(e -> e.getEthereumNonce() == 1L));
         }
 
-        // INSUFFICIENT_GAS(n=1) no CFR
+        // CONTRACT_REVERT_EXECUTED(n=1) no CFR
         {
             var ethTx = domainBuilder.ethereumTransaction(false).get();
             ethTx.setNonce(1L);
@@ -735,7 +759,7 @@ final class EthereumTransactionHandlerTest extends AbstractTransactionHandlerTes
             var recordItem = recordItemBuilder
                     .ethereumTransaction(false)
                     .record(x -> x.clearContractCallResult().clearContractCreateResult())
-                    .status(ResponseCodeEnum.INSUFFICIENT_GAS)
+                    .status(ResponseCodeEnum.CONTRACT_REVERT_EXECUTED)
                     .build();
             var transaction = domainBuilder
                     .transaction()
@@ -840,5 +864,23 @@ final class EthereumTransactionHandlerTest extends AbstractTransactionHandlerTes
                 Arguments.of(true, false, nextNonce),
                 Arguments.of(false, true, incrementedNonce),
                 Arguments.of(false, false, nextNonce));
+    }
+
+    private static Stream<Arguments> provideNoCfrConsumingStatuses() {
+        return Stream.of(
+                Arguments.of(ResponseCodeEnum.SUCCESS),
+                Arguments.of(ResponseCodeEnum.CONTRACT_REVERT_EXECUTED),
+                Arguments.of(ResponseCodeEnum.MAX_CHILD_RECORDS_EXCEEDED),
+                Arguments.of(ResponseCodeEnum.INVALID_CONTRACT_ID));
+    }
+
+    private static Stream<Arguments> provideNoCfrSkippedStatuses() {
+        return Stream.of(
+                Arguments.of(ResponseCodeEnum.WRONG_NONCE),
+                Arguments.of(ResponseCodeEnum.DUPLICATE_TRANSACTION),
+                Arguments.of(ResponseCodeEnum.INSUFFICIENT_GAS),
+                Arguments.of(ResponseCodeEnum.INSUFFICIENT_TX_FEE),
+                Arguments.of(ResponseCodeEnum.INSUFFICIENT_PAYER_BALANCE),
+                Arguments.of(ResponseCodeEnum.INVALID_ACCOUNT_ID));
     }
 }

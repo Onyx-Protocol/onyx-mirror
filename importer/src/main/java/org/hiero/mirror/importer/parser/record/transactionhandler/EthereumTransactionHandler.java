@@ -5,6 +5,7 @@ package org.hiero.mirror.importer.parser.record.transactionhandler;
 import com.hederahashgraph.api.proto.java.ResponseCodeEnum;
 import jakarta.inject.Named;
 import java.math.BigInteger;
+import java.util.EnumSet;
 import lombok.CustomLog;
 import lombok.RequiredArgsConstructor;
 import org.apache.commons.lang3.ArrayUtils;
@@ -28,6 +29,22 @@ import org.hiero.mirror.importer.util.Utility;
 @Named
 @RequiredArgsConstructor
 final class EthereumTransactionHandler extends AbstractTransactionHandler {
+
+    private static final EnumSet<ResponseCodeEnum> NO_CFR_NONCE_CONSUMING_STATUSES = EnumSet.of(
+            ResponseCodeEnum.SUCCESS,
+            ResponseCodeEnum.CONTRACT_REVERT_EXECUTED,
+            ResponseCodeEnum.MAX_CHILD_RECORDS_EXCEEDED,
+            ResponseCodeEnum.INVALID_CONTRACT_ID);
+
+    // Conservative skip list for no-CFR transactions. These statuses are either explicitly non-consuming or
+    // ambiguous without deeper execution context, so advancing here risks pushing mirror ahead of consensus.
+    private static final EnumSet<ResponseCodeEnum> NO_CFR_NONCE_SKIP_STATUSES = EnumSet.of(
+            ResponseCodeEnum.WRONG_NONCE,
+            ResponseCodeEnum.DUPLICATE_TRANSACTION,
+            ResponseCodeEnum.INSUFFICIENT_GAS,
+            ResponseCodeEnum.INSUFFICIENT_TX_FEE,
+            ResponseCodeEnum.INSUFFICIENT_PAYER_BALANCE,
+            ResponseCodeEnum.INVALID_ACCOUNT_ID);
 
     private final ContractBytecodeService contractBytecodeService;
     private final EntityListener entityListener;
@@ -155,13 +172,10 @@ final class EthereumTransactionHandler extends AbstractTransactionHandler {
 
         var transactionRecord = recordItem.getTransactionRecord();
         if (!transactionRecord.hasContractCallResult() && !transactionRecord.hasContractCreateResult()) {
-            // No CFR present. Some statuses still consume nonce at consensus.
             var status = transactionRecord.getReceipt().getStatus();
-            if (status == ResponseCodeEnum.WRONG_NONCE || status == ResponseCodeEnum.DUPLICATE_TRANSACTION) {
+            if (!shouldAdvanceNonceWithoutContractResult(recordItem, status)) {
                 return;
             }
-            // Advance nonce for ALL other statuses (SUCCESS, INSUFFICIENT_GAS, etc.)
-            // WRONG_NONCE and DUPLICATE_TRANSACTION are already filtered above.
             advanceNonceFromTxBody(recordItem, ethereumTransaction);
             return;
         }
@@ -202,6 +216,21 @@ final class EthereumTransactionHandler extends AbstractTransactionHandler {
             entityListener.onEntity(entity);
             recordItem.addEntityId(senderId);
         }
+    }
+
+    private boolean shouldAdvanceNonceWithoutContractResult(RecordItem recordItem, ResponseCodeEnum status) {
+        if (NO_CFR_NONCE_CONSUMING_STATUSES.contains(status)) {
+            return true;
+        }
+
+        if (!NO_CFR_NONCE_SKIP_STATUSES.contains(status)) {
+            log.warn(
+                    "Skipping no-CFR nonce advancement for unverified status {} at {}",
+                    status,
+                    recordItem.getConsensusTimestamp());
+        }
+
+        return false;
     }
 
     private void advanceNonceFromTxBody(RecordItem recordItem, EthereumTransaction ethereumTransaction) {
