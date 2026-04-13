@@ -7,7 +7,6 @@ import static com.hederahashgraph.api.proto.java.ResponseCodeEnum.CONTRACT_NEGAT
 import static com.hederahashgraph.api.proto.java.ResponseCodeEnum.CONTRACT_REVERT_EXECUTED;
 import static com.hederahashgraph.api.proto.java.ResponseCodeEnum.INSUFFICIENT_PAYER_BALANCE;
 import static com.hederahashgraph.api.proto.java.ResponseCodeEnum.INVALID_CONTRACT_ID;
-import static com.hederahashgraph.api.proto.java.ResponseCodeEnum.PAYER_ACCOUNT_NOT_FOUND;
 import static org.assertj.core.api.AssertionsForClassTypes.assertThat;
 import static org.assertj.core.api.AssertionsForClassTypes.assertThatThrownBy;
 import static org.hiero.mirror.common.util.DomainUtils.toEvmAddress;
@@ -57,6 +56,7 @@ import org.hiero.mirror.web3.throttle.ThrottleProperties;
 import org.hiero.mirror.web3.viewmodel.BlockType;
 import org.hiero.mirror.web3.web3j.generated.ERCTestContract;
 import org.hiero.mirror.web3.web3j.generated.EthCall;
+import org.hiero.mirror.web3.web3j.generated.SenderProbe;
 import org.hiero.mirror.web3.web3j.generated.State;
 import org.hyperledger.besu.datatypes.Address;
 import org.junit.jupiter.api.BeforeEach;
@@ -479,11 +479,11 @@ class ContractCallServiceTest extends ContractCallServicePrecompileHistoricalTes
         final var serviceParameters = getContractExecutionParametersWithValue(
                 BlockType.LATEST, Bytes.EMPTY, notExistingAccountAddress, receiverAddress, 10L);
 
-        // Then
-        assertThatThrownBy(() -> contractExecutionService.processCall(serviceParameters))
-                .isInstanceOf(MirrorEvmTransactionException.class)
-                .hasMessage(PAYER_ACCOUNT_NOT_FOUND.name());
+        // When
+        final var result = contractExecutionService.processCall(serviceParameters);
 
+        // Then
+        assertThat(result).isEqualTo(HEX_PREFIX);
         assertGasLimit(serviceParameters);
     }
 
@@ -505,7 +505,7 @@ class ContractCallServiceTest extends ContractCallServicePrecompileHistoricalTes
     }
 
     @Test
-    void ethCallWithValueAndSenderContractFails() {
+    void ethCallWithValueAndSenderContractSucceeds() {
         // Given
         final var receiverEntity = accountEntityWithEvmAddressPersist();
         final var receiverAddress = getAliasAddressFromEntity(receiverEntity);
@@ -514,14 +514,44 @@ class ContractCallServiceTest extends ContractCallServicePrecompileHistoricalTes
         final var serviceParameters = getContractExecutionParametersWithValue(
                 BlockType.LATEST, Bytes.EMPTY, contractAddress, receiverAddress, 10L);
 
-        // Then
-        assertThatThrownBy(() -> contractExecutionService.processCall(serviceParameters))
-                .isInstanceOf(MirrorEvmTransactionException.class)
-                .extracting("detail")
-                .asString()
-                .matches(".*payer account .* is a smart contract.*");
+        // When
+        final var result = contractExecutionService.processCall(serviceParameters);
 
+        // Then
+        assertThat(result).isEqualTo(HEX_PREFIX);
         assertGasLimit(serviceParameters);
+    }
+
+    @Test
+    void ethCallWithContractSenderPreservesLogicalSender() throws Exception {
+        // Given
+        final var senderContract = testWeb3jService.deploy(EthCall::deploy);
+        final var probe = testWeb3jService.deploy(SenderProbe::deploy);
+        testWeb3jService.setSender(senderContract.getContractAddress());
+        final var functionCall = probe.call_currentSender();
+
+        // When
+        final var result = functionCall.send();
+
+        // Then
+        assertThat(Address.fromHexString(result)).isEqualTo(Address.fromHexString(senderContract.getContractAddress()));
+        verifyEthCallAndEstimateGas(functionCall, probe);
+    }
+
+    @Test
+    void ethCallWithMissingSenderPreservesLogicalSender() throws Exception {
+        // Given
+        final var missingSender = toAddress(domainBuilder.entityId());
+        final var probe = testWeb3jService.deploy(SenderProbe::deploy);
+        testWeb3jService.setSender(missingSender.toHexString());
+        final var functionCall = probe.call_currentSender();
+
+        // When
+        final var result = functionCall.send();
+
+        // Then
+        assertThat(Address.fromHexString(result)).isEqualTo(missingSender);
+        verifyEthCallAndEstimateGas(functionCall, probe);
     }
 
     @Test

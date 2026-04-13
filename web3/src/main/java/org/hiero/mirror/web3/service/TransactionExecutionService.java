@@ -244,14 +244,19 @@ public class TransactionExecutionService {
     private AccountID getSenderAccountID(final CallServiceParameters params) {
         // Set a default account to keep the sender parameter optional.
         if (params.getSender().isZero() && params.getValue() == 0L) {
-            return EntityIdUtils.toAccountId(systemEntity.treasuryAccount());
+            return treasuryAccountID();
         }
         final var senderAddress = params.getSender();
-        final var accountIDNum = getSenderAccountIDAsNum(senderAddress);
+        final var accountIDNum = resolveSenderAccountIDAsNum(senderAddress);
+        if (accountIDNum == null) {
+            return treasuryAccountID();
+        }
 
         final var account = accountReadableKVState.get(accountIDNum);
         if (account == null) {
-            throwPayerAccountNotFoundException(SENDER_NOT_FOUND);
+            return treasuryAccountID();
+        } else if (account.smartContract()) {
+            return treasuryAccountID();
         } else if (!account.hasKey() || account.key().equals(IMMUTABILITY_SENTINEL_KEY)) {
             // If the account is hollow, complete it in the state as a workaround
             // as this happens in HandleWorkflow in hedera-app but calling the
@@ -268,23 +273,30 @@ public class TransactionExecutionService {
     }
 
     private AccountID getSenderAccountIDAsNum(final Address senderAddress) {
-        AccountID accountIDNum;
-        if (senderAddress != null && !ConversionUtils.isLongZero(senderAddress)) {
-            // If the address is an alias we need to first check if it exists and get the AccountID as a num.
-            accountIDNum = aliasesReadableKVState.get(convertAddressToProtoBytes(senderAddress));
-            if (accountIDNum == null) {
-                throwPayerAccountNotFoundException(SENDER_NOT_FOUND);
-            }
-        } else {
-            final var senderAccountID = accountIdFromEvmAddress(senderAddress);
-            // If the address was passed as a long-zero address we need to convert it to the correct AccountID type.
-            accountIDNum = AccountID.newBuilder()
-                    .accountNum(senderAccountID.getAccountNum())
-                    .shardNum(senderAccountID.getShardNum())
-                    .realmNum(senderAccountID.getRealmNum())
-                    .build();
+        final var accountIDNum = resolveSenderAccountIDAsNum(senderAddress);
+        if (accountIDNum == null) {
+            throwPayerAccountNotFoundException(SENDER_NOT_FOUND);
         }
         return accountIDNum;
+    }
+
+    private AccountID resolveSenderAccountIDAsNum(final Address senderAddress) {
+        if (senderAddress != null && !ConversionUtils.isLongZero(senderAddress)) {
+            // If the address is an alias we need to first check if it exists and get the AccountID as a num.
+            return aliasesReadableKVState.get(convertAddressToProtoBytes(senderAddress));
+        }
+
+        final var senderAccountID = accountIdFromEvmAddress(senderAddress);
+        // If the address was passed as a long-zero address we need to convert it to the correct AccountID type.
+        return AccountID.newBuilder()
+                .accountNum(senderAccountID.getAccountNum())
+                .shardNum(senderAccountID.getShardNum())
+                .realmNum(senderAccountID.getRealmNum())
+                .build();
+    }
+
+    private AccountID treasuryAccountID() {
+        return EntityIdUtils.toAccountId(systemEntity.treasuryAccount());
     }
 
     // In services SolvencyPreCheck#getPayerAccount() in case the payer account is not found or is a smart contract the

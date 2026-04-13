@@ -38,6 +38,7 @@ class ContractController {
         try {
             throttleManager.throttle(request);
             validateContractMaxGasLimit(request);
+            validateStateOverride(request);
 
             final var params = constructServiceParameters(request);
             final var result = contractExecutionService.processCall(params);
@@ -90,6 +91,12 @@ class ContractController {
         if (request.getGas() > evmProperties.getMaxGasLimit()) {
             throw new InvalidParametersException(
                     "gas field must be less than or equal to %d".formatted(evmProperties.getMaxGasLimit()));
+        }
+    }
+
+    private void validateStateOverride(ContractCallRequest request) {
+        if (request.getStateOverride() != null && !request.getStateOverride().isNull()) {
+            throw new InvalidParametersException("stateOverride is not supported");
         }
     }
 }

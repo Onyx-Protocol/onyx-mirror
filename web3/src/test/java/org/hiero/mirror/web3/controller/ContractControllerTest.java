@@ -353,6 +353,66 @@ class ContractControllerTest {
     }
 
     @Test
+    void callRejectsStateOverride() throws Exception {
+        final var request = """
+                {
+                  "block": "latest",
+                  "data": "0x1079023a",
+                  "estimate": false,
+                  "from": "0x00000000000000000000000000000000000004e2",
+                  "gas": 10000000,
+                  "gasPrice": 78282329,
+                  "stateOverride": {
+                    "0x00000000000000000000000000000000000004e4": {
+                      "balance": "0x1"
+                    }
+                  },
+                  "to": "0x00000000000000000000000000000000000004e4",
+                  "value": 23
+                }
+                """;
+
+        mockMvc.perform(post(CALL_URI)
+                        .accept(MediaType.APPLICATION_JSON)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(request))
+                .andExpect(status().isBadRequest())
+                .andExpect(content()
+                        .string(convert(new GenericErrorResponse(
+                                BAD_REQUEST.getReasonPhrase(), "stateOverride is not supported"))));
+    }
+
+    @Test
+    void estimateGasRejectsStateOverride() throws Exception {
+        final var request = """
+                {
+                  "block": "latest",
+                  "data": "0x1079023a",
+                  "estimate": true,
+                  "from": "0x00000000000000000000000000000000000004e2",
+                  "gas": 10000000,
+                  "gasPrice": 78282329,
+                  "stateOverride": {
+                    "0x00000000000000000000000000000000000004e4": {
+                      "code": "0x6000"
+                    }
+                  },
+                  "to": "0x00000000000000000000000000000000000004e4",
+                  "value": 0
+                }
+                """;
+
+        mockMvc.perform(post(CALL_URI)
+                        .accept(MediaType.APPLICATION_JSON)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(request))
+                .andExpect(status().isBadRequest())
+                .andExpect(content()
+                        .string(convert(new GenericErrorResponse(
+                                BAD_REQUEST.getReasonPhrase(), "stateOverride is not supported"))));
+    }
+
+    @Test
     void callWithNotSupportedPrecompile() throws Exception {
         final var request = request();
 

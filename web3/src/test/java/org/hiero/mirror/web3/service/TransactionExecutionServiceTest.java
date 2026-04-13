@@ -2,7 +2,6 @@
 
 package org.hiero.mirror.web3.service;
 
-import static com.hedera.hapi.node.base.ResponseCodeEnum.PAYER_ACCOUNT_NOT_FOUND;
 import static com.hedera.hapi.node.base.ResponseCodeEnum.SUCCESS;
 import static org.assertj.core.api.AssertionsForClassTypes.assertThat;
 import static org.assertj.core.api.AssertionsForClassTypes.assertThatThrownBy;
@@ -10,6 +9,7 @@ import static org.assertj.core.api.InstanceOfAssertFactories.collection;
 import static org.hiero.mirror.web3.state.Utils.DEFAULT_KEY;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.hedera.hapi.node.base.AccountID;
@@ -56,6 +56,7 @@ import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
@@ -85,6 +86,8 @@ class TransactionExecutionServiceTest {
     @Mock
     private TransactionExecutorFactory transactionExecutorFactory;
 
+    private CommonProperties commonProperties;
+    private SystemEntity systemEntity;
     private TransactionExecutionService transactionExecutionService;
 
     private static Stream<Arguments> provideCallData() {
@@ -95,8 +98,8 @@ class TransactionExecutionServiceTest {
 
     @BeforeEach
     void setUp() {
-        var commonProperties = new CommonProperties();
-        var systemEntity = new SystemEntity(commonProperties);
+        commonProperties = new CommonProperties();
+        systemEntity = new SystemEntity(commonProperties);
         transactionExecutionService = new TransactionExecutionService(
                 accountReadableKVState,
                 aliasesReadableKVState,
@@ -417,15 +420,16 @@ class TransactionExecutionServiceTest {
                 when(accountReadableKVState.get(any())).thenReturn(null);
             } else {
                 when(aliasesReadableKVState.get(any())).thenReturn(null);
-                when(accountReadableKVState.get(any())).thenReturn(mock(Account.class));
             }
 
             var callServiceParameters = buildServiceParams(false, org.apache.tuweni.bytes.Bytes.EMPTY, senderAddress);
 
+            // When
+            final var result = transactionExecutionService.execute(callServiceParameters, DEFAULT_GAS);
+
             // Then
-            assertThatThrownBy(() -> transactionExecutionService.execute(callServiceParameters, DEFAULT_GAS))
-                    .isInstanceOf(MirrorEvmTransactionException.class)
-                    .hasMessage(PAYER_ACCOUNT_NOT_FOUND.name());
+            assertThat(result).isNotNull();
+            assertFallbackPayerWasUsed();
         }
 
         @MockitoSettings(strictness = Strictness.LENIENT)
@@ -466,45 +470,14 @@ class TransactionExecutionServiceTest {
             // Then
             assertThat(result).isNotNull();
             assertThat(result.responseCodeEnum()).isEqualTo(SUCCESS);
+            assertFallbackPayerWasUsed();
         }
 
-        @MockitoSettings(strictness = Strictness.LENIENT)
-        @Test
-        void testExecuteContractCallInvalidSenderContract() {
-            // Given
-            final var sender = Address.fromHexString("0x1234");
-            final var accountID = AccountID.newBuilder().accountNum(12_345L).build();
-            final var account = Account.newBuilder()
-                    .accountId(accountID)
-                    .smartContract(true)
-                    .key(DEFAULT_KEY)
-                    .build();
-
-            final var aliasKey = ProtoBytes.newBuilder()
-                    .value(com.hedera.pbj.runtime.io.buffer.Bytes.wrap(sender.toArrayUnsafe()))
-                    .build();
-
-            when(aliasesReadableKVState.get(aliasKey)).thenReturn(accountID);
-            when(accountReadableKVState.get(accountID)).thenReturn(account);
-
-            final var functionResult =
-                    ContractFunctionResult.newBuilder().gasUsed(DEFAULT_GAS).build();
-            final var receipt = TransactionReceipt.newBuilder().status(SUCCESS).build();
-            final var record = TransactionRecord.newBuilder()
-                    .receipt(receipt)
-                    .contractCallResult(functionResult)
-                    .build();
-            final var transaction = Transaction.newBuilder().build();
-            final var outputs = new SingleTransactionRecord.TransactionOutputs(null);
-            final var singleRecord = new SingleTransactionRecord(transaction, record, List.of(), outputs);
-
-            when(transactionExecutor.execute(any(), any(), any())).thenReturn(List.of(singleRecord));
-
-            final var params = buildServiceParams(false, org.apache.tuweni.bytes.Bytes.EMPTY, sender);
-            // Then
-            assertThatThrownBy(() -> transactionExecutionService.execute(params, DEFAULT_GAS))
-                    .isInstanceOf(MirrorEvmTransactionException.class)
-                    .hasMessage(PAYER_ACCOUNT_NOT_FOUND.name());
+        private void assertFallbackPayerWasUsed() {
+            final var transactionBodyCaptor = ArgumentCaptor.forClass(TransactionBody.class);
+            verify(transactionExecutor).execute(transactionBodyCaptor.capture(), any(Instant.class), any());
+            assertThat(transactionBodyCaptor.getValue().transactionID().accountID())
+                    .isEqualTo(com.hedera.services.utils.EntityIdUtils.toAccountId(systemEntity.treasuryAccount()));
         }
     }
 }
