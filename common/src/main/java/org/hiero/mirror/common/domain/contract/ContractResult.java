@@ -89,6 +89,10 @@ public class ContractResult implements Persistable<Long> {
     }
 
     public ContractTransactionHash toContractTransactionHash() {
+        if (transactionHash == null || contractId == EntityId.EMPTY.getId()) {
+            return null;
+        }
+
         return ContractTransactionHash.builder()
                 .consensusTimestamp(consensusTimestamp)
                 .hash(transactionHash)

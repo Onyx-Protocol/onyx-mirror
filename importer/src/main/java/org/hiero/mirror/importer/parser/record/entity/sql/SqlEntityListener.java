@@ -121,7 +121,10 @@ public class SqlEntityListener implements EntityListener, RecordStreamFileListen
     public void onContractResult(ContractResult contractResult) throws ImporterException {
         context.add(contractResult);
         if (entityProperties.getPersist().isContractTransactionHash()) {
-            context.add(contractResult.toContractTransactionHash());
+            var contractTransactionHash = contractResult.toContractTransactionHash();
+            if (contractTransactionHash != null) {
+                context.add(contractTransactionHash);
+            }
         }
     }
 

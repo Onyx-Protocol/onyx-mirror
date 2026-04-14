@@ -1551,6 +1551,36 @@ describe('ContractService.getContractTransactionDetailsByHash negative tests', (
     const transactionDetails = await ContractService.getContractTransactionDetailsByHash(ethereumTxHashBuffer);
     expect(transactionDetails).toEqual([expectedTransactionDetails[2]]);
   });
+
+  test('Prefer non-empty entity id when duplicate failed rows tie on hash and timestamp', async () => {
+    await integrationDomainOps.loadContractTransactionHashes([
+      {
+        consensus_timestamp: 4,
+        entity_id: 0,
+        hash: ethereumTxHash,
+        payer_account_id: entityId10.num,
+        transaction_result: consensusGasExhaustedTransactionResult,
+      },
+      {
+        consensus_timestamp: 4,
+        entity_id: entityId10.num,
+        hash: ethereumTxHash,
+        payer_account_id: entityId10.num,
+        transaction_result: consensusGasExhaustedTransactionResult,
+      },
+    ]);
+
+    const transactionDetails = await ContractService.getContractTransactionDetailsByHash(ethereumTxHashBuffer);
+    expect(transactionDetails).toEqual([
+      {
+        consensusTimestamp: 4,
+        entityId: entityId10.getEncodedId(),
+        hash: ethereumTxHashBuffer,
+        payerAccountId: entityId10.getEncodedId(),
+        transactionResult: Number.parseInt(consensusGasExhaustedTransactionResult),
+      },
+    ]);
+  });
 });
 
 describe('ContractService.getInvolvedContractsByTimestampAndContractId tests', () => {

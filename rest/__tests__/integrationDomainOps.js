@@ -1189,6 +1189,19 @@ const contractTransactionHashDefaults = {
 
 const contractTransactionHashInsertFields = Object.keys(contractTransactionHashDefaults);
 
+const addContractTransactionHash = async (contractTransactionHashInput) => {
+  const contractTransactionHash = {
+    ...contractTransactionHashDefaults,
+    ...contractTransactionHashInput,
+  };
+
+  convertByteaFields(['hash'], contractTransactionHash);
+  contractTransactionHash.entity_id = encodedIdFromSpecValue(contractTransactionHash.entity_id);
+  contractTransactionHash.payer_account_id = encodedIdFromSpecValue(contractTransactionHash.payer_account_id);
+
+  await insertDomainObject('contract_transaction_hash', contractTransactionHashInsertFields, contractTransactionHash);
+};
+
 const addContractResult = async (contractResultInput) => {
   const contractResult = {
     ...contractResultDefaults,
@@ -1272,6 +1285,9 @@ const addContractStateChange = async (contractStateChangeInput) => {
 const addContractTransaction = async (contractTransaction) => {
   await insertDomainObject('contract_transaction', Object.keys(contractTransaction), contractTransaction);
 };
+
+const loadContractTransactionHashes = async (contractTransactionHashes) =>
+  Promise.all(contractTransactionHashes.map(addContractTransactionHash));
 
 const defaultCryptoAllowance = {
   amount: 0,
@@ -1750,6 +1766,7 @@ export default {
   loadContractActions,
   loadContractLogs,
   loadContractResults,
+  loadContractTransactionHashes,
   loadContractStateChanges,
   loadContractStates,
   loadContracts,

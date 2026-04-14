@@ -74,6 +74,7 @@ import org.hiero.mirror.importer.repository.ContractRepository;
 import org.hiero.mirror.importer.repository.ContractResultRepository;
 import org.hiero.mirror.importer.repository.ContractStateChangeRepository;
 import org.hiero.mirror.importer.repository.ContractStateRepository;
+import org.hiero.mirror.importer.repository.ContractTransactionHashRepository;
 import org.hiero.mirror.importer.repository.ContractTransactionRepository;
 import org.hiero.mirror.importer.repository.CryptoAllowanceRepository;
 import org.hiero.mirror.importer.repository.CryptoTransferRepository;
@@ -128,6 +129,7 @@ final class SqlEntityListenerTest extends ImporterIntegrationTest {
     private final ContractLogRepository contractLogRepository;
     private final ContractRepository contractRepository;
     private final ContractResultRepository contractResultRepository;
+    private final ContractTransactionHashRepository contractTransactionHashRepository;
     private final ContractStateChangeRepository contractStateChangeRepository;
     private final ContractStateRepository contractStateRepository;
     private final ContractTransactionRepository contractTransactionRepository;
@@ -278,6 +280,25 @@ final class SqlEntityListenerTest extends ImporterIntegrationTest {
 
         // then
         assertThat(contractResultRepository.findAll()).containsExactlyInAnyOrder(contractResult);
+        assertThat(contractTransactionHashRepository.findAll())
+                .containsExactlyInAnyOrder(contractResult.toContractTransactionHash());
+    }
+
+    @Test
+    void onContractResultSkipsContractTransactionHashWhenContractIdEmpty() {
+        // given
+        var contractResult = domainBuilder
+                .contractResult()
+                .customize(c -> c.contractId(EntityId.EMPTY.getId()))
+                .get();
+
+        // when
+        sqlEntityListener.onContractResult(contractResult);
+        completeFileAndCommit();
+
+        // then
+        assertThat(contractResultRepository.findAll()).containsExactlyInAnyOrder(contractResult);
+        assertThat(contractTransactionHashRepository.findAll()).isEmpty();
     }
 
     @Test
