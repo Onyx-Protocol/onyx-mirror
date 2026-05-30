@@ -725,8 +725,10 @@ final class EthereumTransactionHandlerTest extends AbstractTransactionHandlerTes
 
     @Test
     void updateTransactionMixedNonceSequence() {
-        // Simulate: SUCCESS(n=0) -> CONTRACT_REVERT_EXECUTED(n=1) -> WRONG_NONCE(n=1) -> SUCCESS(n=2) -> final nonce=3
-        // Each call creates a new recordItem, we verify nonce advancement per call
+        // Simulate: SUCCESS CFR(signerNonce=0) -> CONTRACT_REVERT_EXECUTED no-CFR(n=1) -> WRONG_NONCE(n=1)
+        //   -> SUCCESS CFR(signerNonce=2). The CFR path writes signer_nonce directly (post-tx nonce, no +1);
+        //   the no-CFR revert advances tx-body nonce+1. Each call creates a new recordItem, we verify
+        //   nonce advancement per call.
 
         var senderId = domainBuilder.entityId();
 
@@ -735,7 +737,7 @@ final class EthereumTransactionHandlerTest extends AbstractTransactionHandlerTes
             var ethTx = domainBuilder.ethereumTransaction(false).get();
             ethTx.setNonce(0L);
             doReturn(ethTx).when(ethereumTransactionParser).decode(any());
-            var signerNonce = com.google.protobuf.Int64Value.of(0); // consumed nonce
+            var signerNonce = com.google.protobuf.Int64Value.of(0); // post-tx signer nonce
             var recordItem = recordItemBuilder
                     .ethereumTransaction(false)
                     .record(x -> x.getContractCallResultBuilder()
@@ -747,7 +749,7 @@ final class EthereumTransactionHandlerTest extends AbstractTransactionHandlerTes
                     .customize(t -> t.consensusTimestamp(recordItem.getConsensusTimestamp()))
                     .get();
             transactionHandler.updateTransaction(transaction, recordItem);
-            verify(entityListener).onEntity(argThat(e -> e.getEthereumNonce() == 1L));
+            verify(entityListener).onEntity(argThat(e -> e.getEthereumNonce() == 0L));
         }
 
         // CONTRACT_REVERT_EXECUTED(n=1) no CFR
@@ -807,7 +809,7 @@ final class EthereumTransactionHandlerTest extends AbstractTransactionHandlerTes
                     .customize(t -> t.consensusTimestamp(recordItem.getConsensusTimestamp()))
                     .get();
             transactionHandler.updateTransaction(transaction, recordItem);
-            // 3rd onEntity call with nonce=3
+            // 3rd onEntity call (signer_nonce written directly = 2)
             verify(entityListener, times(3)).onEntity(argThat(e -> e.getId() == senderId.getId()));
         }
     }
@@ -835,12 +837,12 @@ final class EthereumTransactionHandlerTest extends AbstractTransactionHandlerTes
                         recordItem.getTransactionBody().getEthereumTransaction().getCallData()));
     }
 
-    // Goliath divergence: signerNonce is the consumed nonce, not the next nonce.
-    // Modern records must persist signerNonce + 1 (matching the legacy path's +1 semantics).
+    // Goliath: on the live consensus JAR signerNonce is ALREADY the post-transaction nonce
+    // (== AccountInfo.ethereumNonce), so the importer persists signerNonce directly — no +1.
     // WRONG_NONCE does not consume a nonce — skip update to prevent regression.
     private static Stream<Arguments> provideNonceOnFailureArguments() {
         long signerNonce = 10L;
-        long nextNonce = signerNonce + 1; // 11 — consumed nonce + 1
+        long nextNonce = signerNonce; // 10 — signer_nonce is already the post-tx nonce
         long incrementedNonce = 1235L;
         return Stream.of(
                 Arguments.of(true, ResponseCodeEnum.SUCCESS, incrementedNonce),
@@ -853,11 +855,11 @@ final class EthereumTransactionHandlerTest extends AbstractTransactionHandlerTes
                 Arguments.of(false, ResponseCodeEnum.WRONG_NONCE, null));
     }
 
-    // Goliath divergence: signerNonce is the consumed nonce, not the next nonce.
-    // Modern records must persist signerNonce + 1 (matching the legacy path's +1 semantics).
+    // Goliath: on the live consensus JAR signerNonce is ALREADY the post-transaction nonce
+    // (== AccountInfo.ethereumNonce), so the importer persists signerNonce directly — no +1.
     private static Stream<Arguments> provideUpdateTransactionArguments() {
         long signerNonce = 10L;
-        long nextNonce = signerNonce + 1; // 11 — Goliath: signerNonce is consumed nonce, not next
+        long nextNonce = signerNonce; // 10 — signer_nonce is already the post-tx nonce
         long incrementedNonce = 1235L;
         return Stream.of(
                 Arguments.of(true, true, incrementedNonce),
