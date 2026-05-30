@@ -256,7 +256,23 @@ public class TransactionExecutionService {
         if (account == null) {
             return treasuryAccountID();
         } else if (account.smartContract()) {
-            return treasuryAccountID();
+            // SolvencyPreCheck#getPayerAccount() rejects a smart-contract payer. The previous fix substituted the
+            // treasury as payer, but for a ContractCall the payer IS the EVM msg.sender, so that made every ERC-20
+            // _balances[msg.sender] read see the treasury's (zero) balance and falsely revert
+            // "transfer amount exceeds balance" for any contract sender (e.g. ERC-4337 smart-account simulations).
+            // Instead, mirror the hollow-account workaround below: patch a non-contract view of the sender into the
+            // writable simulation cache (so SolvencyPreCheck accepts it as payer) and return the ACTUAL sender
+            // account id, so the EVM msg.sender remains the requested `from` (its alias), matching consensus
+            // behaviour. The sender contract is the top-level caller; its own bytecode is not executed at this frame.
+            // Payer solvency is handled separately by the minimum-balance floor that
+            // AbstractAliasedAccountReadableKVState applies to the simulation sender (in the READABLE state, so hbar
+            // conservation holds). The balance is deliberately NOT changed here: mutating it in the writable cache
+            // would create an unexplained net hbar change and fail FinalizeRecordHandler with FAIL_INVALID.
+            final var writableAccountCache =
+                    ContractCallContext.get().getWriteCacheState(AccountReadableKVState.STATE_ID);
+            final var payerView =
+                    account.copyBuilder().smartContract(false).key(DEFAULT_KEY).build();
+            writableAccountCache.put(account.accountId(), payerView);
         } else if (!account.hasKey() || account.key().equals(IMMUTABILITY_SENTINEL_KEY)) {
             // If the account is hollow, complete it in the state as a workaround
             // as this happens in HandleWorkflow in hedera-app but calling the

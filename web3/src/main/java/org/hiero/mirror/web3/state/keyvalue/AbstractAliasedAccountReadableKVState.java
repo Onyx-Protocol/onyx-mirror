@@ -181,8 +181,13 @@ public abstract class AbstractAliasedAccountReadableKVState<K, V> extends Abstra
         final var minimumBalance = evmProperties.getMinimumAccountBalance();
 
         try {
-            // Return DB balance for balance calls or contract entities (e.g., address(this).balance)
-            if (!isBalanceCall && entity.getType() != CONTRACT && (balance == null || balance < minimumBalance)) {
+            // Return DB balance for balance calls or contract entities (e.g., address(this).balance), EXCEPT when the
+            // contract is the simulation sender (payer). An ERC-4337 smart account typically holds ~0 native balance,
+            // so once it is kept as the payer (to preserve the EVM msg.sender) it would fail SolvencyPreCheck with
+            // INSUFFICIENT_PAYER_BALANCE. Give the contract sender the same minimum-balance floor an EOA sender already
+            // receives, in the READABLE state so hbar conservation still holds in FinalizeRecordHandler.
+            final var floorApplies = entity.getType() != CONTRACT || isSimulationSender(context, entity);
+            if (!isBalanceCall && floorApplies && (balance == null || balance < minimumBalance)) {
                 return minimumBalance;
             }
             return balance;
@@ -190,6 +195,14 @@ public abstract class AbstractAliasedAccountReadableKVState<K, V> extends Abstra
             // Always reset the balanceCall flag
             context.setBalanceCall(false);
         }
+    }
+
+    private boolean isSimulationSender(final ContractCallContext context, final Entity entity) {
+        final var params = context.getCallServiceParameters();
+        if (params == null || params.getSender() == null || entity.getEvmAddress() == null) {
+            return false;
+        }
+        return java.util.Arrays.equals(params.getSender().toArrayUnsafe(), entity.getEvmAddress());
     }
 
     private Supplier<List<AccountCryptoAllowance>> getCryptoAllowances(
