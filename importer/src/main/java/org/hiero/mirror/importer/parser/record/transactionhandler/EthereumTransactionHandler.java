@@ -195,8 +195,13 @@ final class EthereumTransactionHandler extends AbstractTransactionHandler {
             if (status == ResponseCodeEnum.WRONG_NONCE) {
                 return;
             }
-            // Goliath divergence: signerNonce is the consumed nonce; +1 aligns with next-nonce semantics
-            nonce = functionResult.getSignerNonce().getValue() + 1;
+            // Goliath divergence: the live consensus JAR (git.commit.id=77738c87b...) reads the sender
+            // account nonce AFTER EVM execution has already incremented it
+            // (ContextTransactionProcessor.withSignerNonce(sender.getNonce()) following
+            // CustomGasCharging.incrementNonce()), so signerNonce is ALREADY the post-transaction nonce
+            // and equals AccountInfo.ethereumNonce. Write it directly — a +1 here pushed the mirror one
+            // ahead of consensus (mirror-AHEAD-by-1 drift; docs/issues/2026-05-21 & 2026-05-29).
+            nonce = functionResult.getSignerNonce().getValue();
         } else if (recordItem.getHapiVersion().isLessThan(RecordFile.HAPI_VERSION_0_47_0)) {
             var status = transactionRecord.getReceipt().getStatus();
             if (!recordItem.isSuccessful()
