@@ -167,7 +167,7 @@ report-*.csv
 
 web3/src/testHistorical/solidity/openzeppelin
 
-### Agentic / operator local (not for this repository)
+### Local operator tooling (not for this repository)
 .memory-bank/
 .claude/
 .cursor/

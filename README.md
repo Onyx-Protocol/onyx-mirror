@@ -35,7 +35,7 @@ Names containing `goliath` (repos, GHCR paths, namespaces) are **legacy technica
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Importer         | `ghcr.io/onyx-protocol/goliath-mirror/mirror-importer@sha256:6f7f64f865a22e31b93d18fd7aee8a81f693cb665b8ff026efbe2e320e850280` (tag `2ec9276`, source `2ec92762282e04d46d00a1ff957dd5061309089c`) |
 | REST             | `ghcr.io/onyx-protocol/goliath-mirror/mirror-rest:main@sha256:0eb170983fbc8c0df75d2f5189fbc289fbcc6c7446770ab7f15e22913d15c04a`                                                                   |
-| Web3             | `ghcr.io/crypt0grapher/goliath-mirror/mirror-web3:aa-contract-sender-fix-22e51c454` (source `22e51c454…`)                                                                                         |
+| Web3             | `ghcr.io/crypt0grapher/goliath-mirror/mirror-web3:aa-contract-sender-fix-22e51c454` (source `faa38e68b7885f835e45881e5222bab39839a325`, image tag `aa-contract-sender-fix-22e51c454`)                                                                                         |
 | gRPC / rest-java | Stock `gcr.io/mirrornode/hedera-mirror-*:0.149.0` (upstream images)                                                                                                                               |
 
 Git tags: `onyx-mainnet-importer-2ec9276`, `onyx-mainnet-web3-22e51c454`.
