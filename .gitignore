@@ -166,3 +166,21 @@ rest/monitoring/config/serverlist.json
 report-*.csv
 
 web3/src/testHistorical/solidity/openzeppelin
+
+### Agentic / operator local (not for this repository)
+.memory-bank/
+.claude/
+.cursor/
+.codex/
+.grok/
+.kimi/
+.kimi-code/
+.opencode/
+CLAUDE.md
+AGENTS.md
+.env
+.env.*
+!.env*.example
+rest/.env
+rest/.env.*
+!.env*.example
