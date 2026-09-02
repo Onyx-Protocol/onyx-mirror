@@ -144,12 +144,12 @@ jobs:
 
     steps:
       - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@5ef0c079ce82195b2a36a210272d6b661572d83e # v2.14.2
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
           egress-policy: audit
 
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           ref: main
           fetch-depth: 0
@@ -232,12 +232,12 @@ jobs:
 
       - name: Setup Testkube CLI
         if: ${{ inputs.run_k6_test == true }}
-        uses: kubeshop/setup-testkube@e06cc069575f7cd2a67403c7da0a48229371a1db # v1.0.11
+        uses: kubeshop/setup-testkube@3deb6ba0cd26e0d890e278d59f996bd30d58b567 # v1.0.12
         with:
           version: v2.3.0
 
       - name: Setup Flux CLI
-        uses: fluxcd/flux2/action@8454b02a32e48d775b9f563cb51fdcb1787b5b93 # v2.7.5
+        uses: fluxcd/flux2/action@1fd61a06264d71cf445ed55c4f14d401d26a1c64 # v2.8.8
         with:
           version: v2.3.0
 
@@ -272,7 +272,7 @@ jobs:
 
       - name: Upload k6 test report
         if: ${{ inputs.run_k6_test == true }}
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: k6-test-report
           path: /tmp/mirrornode-k6-test-report/
