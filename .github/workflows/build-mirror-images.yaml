@@ -10,6 +10,15 @@ on:
     branches: [main]
   workflow_dispatch:
     inputs:
+      ref:
+        description: "Exact 40-character commit SHA to build (branch and tag names are rejected)"
+        required: true
+        type: string
+      components:
+        description: "Comma-separated subset of: importer,rest,rest-java,web3"
+        required: true
+        default: "importer,rest"
+        type: string
       platforms:
         description: "Target platforms (comma-separated)"
         required: false
@@ -24,56 +33,126 @@ env:
   REGISTRY: ghcr.io
 
 jobs:
+  plan:
+    name: Select components
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.select.outputs.matrix }}
+    steps:
+      - name: Validate inputs and select components
+        id: select
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_REF: ${{ inputs.ref }}
+          INPUT_COMPONENTS: ${{ inputs.components }}
+        run: |
+          set -euo pipefail
+          all='[
+            {"id":"importer","context":"importer","image_name":"mirror-importer","gradle_task":":importer:build"},
+            {"id":"rest","context":"rest","image_name":"mirror-rest","gradle_task":""},
+            {"id":"rest-java","context":"rest-java","image_name":"mirror-rest-java","gradle_task":":rest-java:build"},
+            {"id":"web3","context":"web3","image_name":"mirror-web3","gradle_task":":web3:build"}
+          ]'
+          if [ "${EVENT_NAME}" = "workflow_dispatch" ]; then
+            if ! [[ "${INPUT_REF}" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::ref must be an exact 40-character lowercase commit SHA"
+              exit 1
+            fi
+            selected="$(printf '%s' "${INPUT_COMPONENTS}" | tr -d '[:space:]' | tr ',' '\n' | sed '/^$/d' | sort -u)"
+            if [ -z "${selected}" ]; then
+              echo "::error::components must name at least one component"
+              exit 1
+            fi
+            while IFS= read -r c; do
+              case "${c}" in
+                importer|rest|rest-java|web3) ;;
+                *) echo "::error::unknown component '${c}'"; exit 1 ;;
+              esac
+            done <<< "${selected}"
+          else
+            # push and pull_request keep building only importer and rest.
+            # web3 and rest-java are built only on an explicit workflow_dispatch.
+            selected="$(printf 'importer\nrest\n')"
+          fi
+          ids="$(printf '%s\n' "${selected}" | jq -R . | jq -sc .)"
+          matrix="$(jq -c --argjson ids "${ids}" '{component: [ .[] | select(.id as $i | $ids | index($i)) ]}' <<< "${all}")"
+          echo "Selected: ${matrix}"
+          echo "matrix=${matrix}" >> "${GITHUB_OUTPUT}"
+
   build-and-publish:
     name: Build & Publish ${{ matrix.component.image_name }}
+    needs: plan
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      matrix:
-        component:
-          - id: importer
-            context: importer
-            image_name: mirror-importer
-          - id: rest
-            context: rest
-            image_name: mirror-rest
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
 
     steps:
+      - name: Guard dispatch-only components
+        if: github.event_name != 'workflow_dispatch' && (matrix.component.id == 'web3' || matrix.component.id == 'rest-java')
+        run: |
+          echo "::error::web3 and rest-java are built only on workflow_dispatch"
+          exit 1
+
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          # Empty outside workflow_dispatch, which keeps the default event checkout.
+          ref: ${{ inputs.ref }}
+
+      - name: Resolve Checked-Out Commit
+        id: src
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_REF: ${{ inputs.ref }}
+        run: |
+          set -euo pipefail
+          revision="$(git rev-parse HEAD)"
+          if [ "${EVENT_NAME}" = "workflow_dispatch" ] && [ "${revision}" != "${INPUT_REF}" ]; then
+            echo "::error::checked-out HEAD ${revision} does not equal requested ref ${INPUT_REF}"
+            exit 1
+          fi
+          echo "revision=${revision}" >> "${GITHUB_OUTPUT}"
+          echo "source-date=$(git log -1 --pretty=%ct)" >> "${GITHUB_OUTPUT}"
 
       - name: Setup Java 25
-        if: matrix.component.id == 'importer'
+        if: matrix.component.gradle_task != ''
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "25"
 
       - name: Setup Gradle
-        if: matrix.component.id == 'importer'
+        if: matrix.component.gradle_task != ''
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Build Importer Jar
-        if: matrix.component.id == 'importer'
-        run: ./gradlew :importer:build --no-daemon -x test -x check
+      - name: Build ${{ matrix.component.id }} Jar
+        if: matrix.component.gradle_task != ''
+        run: ./gradlew "${GRADLE_TASK}" --no-daemon -x test -x check
         env:
+          GRADLE_TASK: ${{ matrix.component.gradle_task }}
           GRADLE_OPTS: "-Xmx6g -Dorg.gradle.parallel=true"
-
-      - name: Get Commit Timestamp
-        id: commit
-        run: echo "source-date=$(git log -1 --pretty=%ct)" >> "${GITHUB_OUTPUT}"
 
       - name: Docker Metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
+          # The commit tag and the revision label come from `git rev-parse HEAD` of the
+          # checked-out tree (steps.src), never from github.sha. Custom labels override
+          # the generated ones. type=sha uses github.sha, so it is disabled on dispatch.
           images: ${{ env.REGISTRY }}/${{ github.repository }}/${{ matrix.component.image_name }}
+          flavor: |
+            latest=${{ github.event_name == 'workflow_dispatch' && 'false' || 'auto' }}
           tags: |
-            type=ref,event=branch
-            type=semver,pattern={{version}},prefix=
-            type=match,pattern=v(.*),group=1
-            type=match,pattern=goliath-(.*),group=1
-            type=sha,prefix=
+            type=raw,value=${{ steps.src.outputs.revision }}
+            type=ref,event=branch,enable=${{ github.event_name != 'workflow_dispatch' }}
+            type=semver,pattern={{version}},prefix=,enable=${{ github.event_name != 'workflow_dispatch' }}
+            type=match,pattern=v(.*),group=1,enable=${{ github.event_name != 'workflow_dispatch' }}
+            type=match,pattern=goliath-(.*),group=1,enable=${{ github.event_name != 'workflow_dispatch' }}
+            type=sha,prefix=,enable=${{ github.event_name != 'workflow_dispatch' }}
+          labels: |
+            org.opencontainers.image.revision=${{ steps.src.outputs.revision }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
 
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -92,23 +171,9 @@ jobs:
           push: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
           platforms: ${{ inputs.platforms || 'linux/amd64' }}
           build-args: |
-            SOURCE_DATE_EPOCH=${{ steps.commit.outputs.source-date }}
+            SOURCE_DATE_EPOCH=${{ steps.src.outputs.source-date }}
           context: ${{ matrix.component.context }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-      - name: Make Package Public
-        if: github.event_name == 'push'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          IMAGE_NAME: ${{ matrix.component.image_name }}
-        run: |
-          PACKAGE_NAME="${GITHUB_REPOSITORY#*/}/${IMAGE_NAME}"
-          PACKAGE_NAME="${PACKAGE_NAME//\//%2F}"
-          gh api \
-            --method PUT \
-            -H "Accept: application/vnd.github+json" \
-            "/orgs/${GITHUB_REPOSITORY_OWNER}/packages/container/${PACKAGE_NAME}/visibility" \
-            -f visibility=public 2>/dev/null || echo "Note: Set package visibility to public manually in GitHub Settings > Packages"
